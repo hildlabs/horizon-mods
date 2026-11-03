@@ -1,0 +1,39 @@
+id = "inventory_wizard"
+kind = "native-mod"
+name = "InventoryWizard"
+summary = "InventoryWizard's one-click sorting as a native mod for Horizon"
+description = """
+## Features
+
+- **Smart sorting** by category (stone, earth, wood, ores, blocks, tools, weapons, armor, food, redstone,
+  transportation, decoration), from item tags and components, so other mods' items are sorted too
+- **Survival-friendly hotbar**: weapons, tools, food, building blocks, utility items, then the rest
+- **Stacks merged**, but enchanted or named items are never combined
+- **Three modes**: Default, Alphabetical and Stack-based
+- **Sort buttons** by the inventory and container titles, plus a mode button (it shows the mode's letter)
+- **Locked slots**: **Alt+Click** a hotbar or inventory slot to lock it, and sorting leaves it alone
+- **Keys**: **R** (or **Shift+Right Click**) sorts the part under the cursor: the hotbar sorts everything, the
+  inventory the inventory, a container the container. Outside a screen, R sorts the whole inventory.
+  **Shift+Right Click** on the middle hotbar slot cycles the mode. The mode also has its own key, unbound by default.
+- **Commands**: `/iwiz [hotbar|inventory|all|mode]` (also `/inventorywizard`)
+- **Works on** the inventory, hotbar, chests, barrels, shulker boxes and ender chests, **in singleplayer and on any
+  server**: every sort is made of ordinary left clicks, as a player could click them, so a vanilla server accepts it"""
+authors = ["VanishingTacos"]
+owners = ["VanishingTacos"]
+license = "MIT"
+source = "https://github.com/VanishingTacos/InventoryWizard-Horizon"
+icon = "https://cdn.modrinth.com/data/cU0ynk3p/21b58402405493964af438e3e3b9551676b68433.png"
+key = "RWTos7ZtiqwDTrtjtHk3WhMJJc1+sSTTyTu9CaDtIYWSQvww2D9WrAN1"
+
+[[versions]]
+version = "2.3.3"
+published = "2026-11-01"
+game = "26.3"
+file = "inventory_wizard-2.3.3.hnmod"
+sha256 = "03a7c8a528148611e5f309f3d05294a97b6766ca5e3bda9b3f1f79458fe65a42"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUTos7ZtiqwDTmRp04qx/n5ZXozvaeOig3nJZFeNqmfmZ1PjB/2JUcfiF0JLZZJBkqpwm6sZQAvrt4HNce0juB5KaxJUOQJtAAo=\r
+trusted comment: timestamp:1793498930\tfile:inventory_wizard-2.3.3.hnmod\thashed\r
+Q0SE4CMnaFQHCmizFD0JcIPkUfiYQVs3KyGCCpS99m3OfFNhnS0gQt20ul0QlyYDAC8bAPJRjyrSIgcD1KzPAQ=="""
+changelog = "Full native port of InventoryWizard for Horizon "

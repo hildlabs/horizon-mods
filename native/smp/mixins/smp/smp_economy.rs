@@ -42,46 +42,6 @@ pub struct Account {
     pub balance: i64,
 }
 
-/// What the Treasury paid or got, for `/treasury log`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Movement {
-    pub time: i64,
-    /// `vat`, `land_tax`, `grant`...
-    pub kind: String,
-    /// Positive: income; negative: spending.
-    pub amount: i64,
-    /// The player's name last seen.
-    pub player: String,
-    /// Why, as the operator wrote it (payments); empty for taxes.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub reason: String,
-    /// The operator who paid it (name).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub by: String,
-}
-
-/// The Treasury: the state's account. Every tax, fee and house edge goes in;
-/// operators' grants, refunds and prizes (and later bank interest and
-/// contracts) come out, never more than it holds. Nobody can make money.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Treasury {
-    /// Since the Treasury opened, by kind.
-    pub income: BTreeMap<String, i64>,
-    pub spent: BTreeMap<String, i64>,
-    /// Today's (UTC day number), by kind.
-    pub day: i64,
-    pub income_today: BTreeMap<String, i64>,
-    pub spent_today: BTreeMap<String, i64>,
-    /// The day before `day`'s, kept for the daily report.
-    pub income_yesterday: BTreeMap<String, i64>,
-    pub spent_yesterday: BTreeMap<String, i64>,
-    /// The latest movements, newest last (at most `LOG`).
-    pub log: Vec<Movement>,
-}
-
-/// Movements `/treasury log` keeps.
-pub const LOG: usize = 50;
 /// Milliseconds in a day.
 pub const DAY_MS: i64 = 86_400_000;
 
@@ -100,16 +60,14 @@ pub struct Accounts {
     /// balances, so one write moves both and a crash can't split them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: BTreeMap<String, serde_json::Value>,
-    /// System pools, by name: the Treasury (`TREASURY`), its insurance
-    /// fund (`INSURANCE`), the casino's pot. Money in a pool belongs to no
-    /// player: never in `accounts()`, `/baltop` or the sidebar.
+    /// System pools, by name: the casino's pot, the auction house's bids.
+    /// Money in a pool belongs to no player: never in `accounts()`,
+    /// `/baltop` or the sidebar.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pools: BTreeMap<String, i64>,
-    /// What went into and out of the Treasury pool, for `/treasury`.
-    #[serde(default)]
-    pub treasury: Treasury,
     /// Money made and destroyed by the server (`adjust`: market sales and
-    /// purchases, the daily reward), by kind, for `/eco stats`.
+    /// purchases, the daily reward, operators' `/eco give` and `/eco take`),
+    /// by kind, for `/eco stats`.
     #[serde(default)]
     pub flows: Flows,
 }
@@ -144,10 +102,10 @@ impl Flows {
     }
 }
 
-/// The state's pool: taxes, fees and house edges in; grants out.
-pub const TREASURY: &str = "treasury";
-/// Part of the state: covers what a liquidated position can't.
-pub const INSURANCE: &str = "insurance";
+/// What 0.30 took out (the Treasury, its insurance fund, the bank, the
+/// futures, the jobs, the taxes): their pools and their state in `ext`.
+const RETIRED_POOLS: [&str; 4] = ["treasury", "insurance", "bank", "futures"];
+const RETIRED_PARTS: [&str; 4] = ["bank", "futures", "jobs", "tax"];
 
 /// A player as a command sees them.
 #[derive(Clone, Debug, PartialEq)]
@@ -198,6 +156,7 @@ impl Economy {
             revision: 0,
             now: 0,
         };
+        economy.retire()?;
         // Games the last run left undecided: their stakes go back.
         let held: Vec<(String, i64)> = economy.accounts.held.clone().into_iter().collect();
         for (key, amount) in held {
@@ -206,6 +165,60 @@ impl Economy {
             }
         }
         Ok(economy)
+    }
+
+    /// Once, on a world from before 0.30: bank savings and open futures
+    /// positions' margins go back to their owners (logged `bank_closed`,
+    /// `futures_closed`), and the retired parts' pools and state are dropped.
+    fn retire(&mut self) -> Result<(), String> {
+        let mut back: Vec<(&str, u128, i64)> = Vec::new();
+        let ext = &self.accounts.ext;
+        if let Some(accounts) = ext
+            .get("bank")
+            .and_then(|b| b.get("accounts"))
+            .and_then(|a| a.as_object())
+        {
+            for (key, saving) in accounts {
+                let amount = saving.get("amount").and_then(|a| a.as_i64()).unwrap_or(0);
+                if let Some(u) = super::smp_store::parse_uuid(key) {
+                    back.push(("bank_closed", u, amount));
+                }
+            }
+        }
+        if let Some(positions) = ext
+            .get("futures")
+            .and_then(|f| f.get("positions"))
+            .and_then(|p| p.as_array())
+        {
+            for p in positions {
+                let owner = p
+                    .get("owner")
+                    .and_then(|o| o.as_str())
+                    .and_then(super::smp_store::parse_uuid);
+                let margin = p.get("margin").and_then(|m| m.as_i64()).unwrap_or(0);
+                if let Some(u) = owner {
+                    back.push(("futures_closed", u, margin));
+                }
+            }
+        }
+        for (kind, uuid, amount) in back.into_iter().filter(|b| b.2 > 0) {
+            let entry = self.entry(kind, None, Some(uuid), amount, "");
+            self.audit.append(&entry)?;
+            let account = self.accounts.accounts.entry(uuid_string(uuid)).or_default();
+            account.balance = account.balance.saturating_add(amount);
+            self.touch();
+        }
+        for part in RETIRED_PARTS {
+            if self.accounts.ext.remove(part).is_some() {
+                self.touch();
+            }
+        }
+        for pool in RETIRED_POOLS {
+            if self.accounts.pools.remove(pool).is_some() {
+                self.touch();
+            }
+        }
+        Ok(())
     }
 
     fn touch(&mut self) {
@@ -295,30 +308,23 @@ impl Economy {
         Ok(())
     }
 
-    /// A game decided: each stake leaves held, and `winner` gets `prize`
-    /// (at most the stakes together), logged as `kind`.
+    /// A game decided: each stake leaves held, and `winner` gets them all,
+    /// logged as `kind`.
     pub fn award(
         &mut self,
         kind: &str,
         stakes: &[(u128, i64)],
         winner: u128,
-        prize: i64,
     ) -> Result<(), String> {
-        let total: i64 = stakes.iter().map(|(_, a)| *a).sum();
-        if stakes.iter().any(|(u, a)| self.held(*u) < *a) || !(0..=total).contains(&prize) {
+        if stakes.iter().any(|(u, a)| self.held(*u) < *a) {
             return Err("The stakes are not held.".into());
         }
-        let fee = total - prize;
+        let prize: i64 = stakes.iter().map(|(_, a)| *a).sum();
         let mut entry = self.entry(kind, None, Some(winner), prize, "");
         entry["stakes"] = stakes
             .iter()
             .map(|(u, a)| serde_json::json!({ "uuid": uuid_string(*u), "amount": a }))
             .collect();
-        if fee > 0 {
-            // The house's fee goes to the Treasury, not away.
-            entry["fee"] = fee.into();
-            entry["to_pool"] = TREASURY.into();
-        }
         self.audit.append(&entry)?;
         for (u, a) in stakes {
             self.take_held(&uuid_string(*u), *a);
@@ -329,10 +335,6 @@ impl Economy {
             .entry(uuid_string(winner))
             .or_default();
         account.balance = account.balance.saturating_add(prize);
-        if fee > 0 {
-            self.pool_add(TREASURY, fee);
-            self.count_treasury("gambling_fee", fee, Some(winner), "", "");
-        }
         self.touch();
         Ok(())
     }
@@ -351,11 +353,6 @@ impl Economy {
         self.accounts.pools.get(name).copied().unwrap_or(0)
     }
 
-    /// What went into and out of the Treasury.
-    pub fn treasury(&self) -> &Treasury {
-        &self.accounts.treasury
-    }
-
     fn pool_add(&mut self, name: &str, delta: i64) {
         let p = self.accounts.pools.entry(name.to_owned()).or_default();
         *p = p.saturating_add(delta);
@@ -364,61 +361,8 @@ impl Economy {
         }
     }
 
-    /// Counts a Treasury movement (`amount` > 0 income, < 0 spending).
-    fn count_treasury(
-        &mut self,
-        kind: &str,
-        amount: i64,
-        player: Option<u128>,
-        reason: &str,
-        by: &str,
-    ) {
-        if amount == 0 {
-            return;
-        }
-        let day = self.now.div_euclid(DAY_MS);
-        let player = player
-            .and_then(|u| self.name_of(u).map(str::to_owned))
-            .unwrap_or_default();
-        let by = super::smp_store::parse_uuid(by)
-            .and_then(|u| self.name_of(u).map(str::to_owned))
-            .unwrap_or_else(|| by.to_owned());
-        let t = &mut self.accounts.treasury;
-        if t.day != day {
-            let next = t.day + 1 == day;
-            t.income_yesterday = std::mem::take(&mut t.income_today);
-            t.spent_yesterday = std::mem::take(&mut t.spent_today);
-            if !next {
-                t.income_yesterday.clear();
-                t.spent_yesterday.clear();
-            }
-            t.day = day;
-        }
-        let (all, today) = if amount > 0 {
-            (&mut t.income, &mut t.income_today)
-        } else {
-            (&mut t.spent, &mut t.spent_today)
-        };
-        for map in [all, today] {
-            let v = map.entry(kind.to_owned()).or_default();
-            *v = v.saturating_add(amount.abs());
-        }
-        t.log.push(Movement {
-            time: self.now,
-            kind: kind.to_owned(),
-            amount,
-            player,
-            reason: reason.to_owned(),
-            by,
-        });
-        if t.log.len() > LOG {
-            let extra = t.log.len() - LOG;
-            t.log.drain(..extra);
-        }
-    }
-
-    /// A tax, a fee, a stake lost: `amount` of `uuid`'s balance goes into
-    /// `pool`, logged as `kind`. An Err when they hold less.
+    /// A bid, a bet: `amount` of `uuid`'s balance goes into `pool`, logged
+    /// as `kind`. An Err when they hold less.
     pub fn to_pool(
         &mut self,
         kind: &str,
@@ -463,16 +407,13 @@ impl Economy {
             .expect("checked")
             .balance -= amount;
         self.pool_add(pool, amount);
-        if pool == TREASURY {
-            self.count_treasury(kind, amount, Some(uuid), reason, by);
-        }
         self.touch();
         Ok(())
     }
 
-    /// A payment from `pool` to `uuid` (a grant, a refund, a payout),
+    /// A payment from `pool` to `uuid` (a refund, a payout),
     /// logged as `kind`: never more than the pool holds.
-    #[allow(dead_code)] // the casino, the auction house and the futures
+    #[allow(dead_code)] // the casino and the auction house
     pub fn from_pool(
         &mut self,
         kind: &str,
@@ -521,16 +462,13 @@ impl Economy {
             .expect("checked")
             .balance += amount;
         self.pool_add(pool, -amount);
-        if pool == TREASURY {
-            self.count_treasury(kind, -amount, Some(uuid), reason, by);
-        }
         self.touch();
         Ok(())
     }
 
-    /// Moves `amount` from one pool to another (the casino's profit to the
-    /// Treasury), logged as `kind`; an Err when `from` holds less.
-    #[allow(dead_code)] // the casino, the auction house and the futures
+    /// Moves `amount` from one pool to another, logged as `kind`; an Err
+    /// when `from` holds less.
+    #[allow(dead_code)] // the casino and the auction house
     pub fn pool_move(
         &mut self,
         kind: &str,
@@ -557,12 +495,29 @@ impl Economy {
         self.audit.append(&entry)?;
         self.pool_add(from, -amount);
         self.pool_add(to, amount);
-        if to == TREASURY {
-            self.count_treasury(kind, amount, None, reason, "");
+        self.touch();
+        Ok(())
+    }
+
+    /// Money made for a pool (the casino's float, once), logged as `kind`
+    /// and counted as made.
+    pub fn mint_pool(
+        &mut self,
+        kind: &str,
+        pool: &str,
+        amount: i64,
+        reason: &str,
+    ) -> Result<(), String> {
+        if amount <= 0 || amount > MAX_AMOUNT {
+            return Err("The amount must be a positive whole number.".into());
         }
-        if from == TREASURY {
-            self.count_treasury(kind, -amount, None, reason, "");
-        }
+        let entry = serde_json::json!({
+            "time": self.now, "kind": kind, "amount": amount,
+            "to_pool": pool, "pool_before": self.pool(pool), "reason": reason,
+        });
+        self.audit.append(&entry)?;
+        self.pool_add(pool, amount);
+        self.count_flow(kind, amount);
         self.touch();
         Ok(())
     }
@@ -570,7 +525,7 @@ impl Economy {
     /// A bet against a pool decided: `uuid`'s held `stake` goes into
     /// `pool`, then `payout` (at most what the pool then holds) comes out
     /// to them; one log line. What was paid. Never makes money.
-    #[allow(dead_code)] // the casino, the auction house and the futures
+    #[allow(dead_code)] // the casino and the auction house
     pub fn settle_pool(
         &mut self,
         kind: &str,
@@ -595,9 +550,6 @@ impl Economy {
         self.pool_add(pool, stake - paid);
         let account = self.accounts.accounts.entry(key).or_default();
         account.balance = account.balance.saturating_add(paid);
-        if pool == TREASURY {
-            self.count_treasury(kind, stake - paid, Some(uuid), "", "");
-        }
         self.touch();
         Ok(paid)
     }
@@ -768,6 +720,18 @@ impl Economy {
     /// Adds (or with a negative `delta`, takes) money from the server: the
     /// market, games, operators. The balance never goes below zero.
     pub fn adjust(&mut self, kind: &str, uuid: u128, delta: i64, by: &str) -> Result<i64, String> {
+        self.adjust_why(kind, uuid, delta, by, "")
+    }
+
+    /// [`Self::adjust`] with the operator's reason in the log.
+    pub fn adjust_why(
+        &mut self,
+        kind: &str,
+        uuid: u128,
+        delta: i64,
+        by: &str,
+        reason: &str,
+    ) -> Result<i64, String> {
         let key = uuid_string(uuid);
         let Some(a) = self.accounts.accounts.get(&key) else {
             return Err("No such account.".into());
@@ -784,13 +748,23 @@ impl Economy {
         } else {
             (None, Some(uuid))
         };
-        let entry = self.entry(kind, from, to, delta.abs(), by);
+        let mut entry = self.entry(kind, from, to, delta.abs(), by);
+        if !reason.is_empty() {
+            entry["reason"] = reason.into();
+        }
         self.audit.append(&entry)?;
         self.accounts
             .accounts
             .get_mut(&key)
             .expect("checked")
             .balance = after;
+        self.count_flow(kind, delta);
+        self.touch();
+        Ok(after)
+    }
+
+    /// Counts money made (`delta` > 0) or destroyed, by the kind's first word.
+    fn count_flow(&mut self, kind: &str, delta: i64) {
         let flows = &mut self.accounts.flows;
         flows.roll(self.now.div_euclid(DAY_MS));
         let family = kind.split(' ').next().unwrap_or(kind).to_owned();
@@ -800,8 +774,6 @@ impl Economy {
             &mut flows.burned
         };
         *map.entry(family).or_default() += delta.abs();
-        self.touch();
-        Ok(after)
     }
 
     /// Appends a line of another kind to the audit log (a trade's items),
@@ -905,41 +877,56 @@ impl Economy {
         out
     }
 
-    /// `/eco take <player> <amount> [reason]`: an operator takes money from
-    /// a player (a cheat's gains) into the Treasury. Nobody can make money:
-    /// `give` and `set` say where grants come from now.
+    /// `/eco give <player> <amount> <reason>` (made for them: an event
+    /// prize, a bug refund) and `/eco take <player> <amount> [reason]` (a
+    /// cheat's gains, destroyed): operators of level 3. A gift is told to
+    /// everyone, with its reason.
     fn eco(&mut self, me: &Player, args: &[&str]) -> Vec<Out> {
         if me.level < 3 {
             return vec![Out::Error("Only operators of level 3 may use /eco.".into())];
         }
-        const USAGE: &str = "Usage: /eco take <player> <amount> [reason]";
-        match args {
-            ["give" | "set" | "add", ..] => vec![Out::Error(
-                "Nobody can make money, operators included. Pay from the Treasury: /treasury pay <player> <amount> <reason>"
-                    .into(),
-            )],
-            ["take", who, amount, reason @ ..] => {
-                let Some(amount) = parse_amount(amount) else {
-                    return vec![Out::Error(
-                        "The amount must be a positive whole number.".into(),
-                    )];
-                };
-                let Some((uuid, account)) = self.find(who) else {
-                    return vec![Out::Error(format!("No player named {who} has an account."))];
-                };
-                let name = account.name.clone();
-                let reason = reason.join(" ");
-                let by = uuid_string(me.uuid);
-                match self.into_pool("eco_take", uuid, TREASURY, amount, &reason, &by) {
-                    Ok(()) => vec![Out::Reply(format!(
-                        "Took {} from {name} into the Treasury. They have {}.",
-                        self.money(amount),
-                        self.money(self.balance(uuid))
-                    ))],
-                    Err(e) => vec![Out::Error(e)],
-                }
+        const USAGE: &str =
+            "Usage: /eco give <player> <amount> <reason>, /eco take <player> <amount> [reason]";
+        let (give, who, amount, reason) = match args {
+            [verb @ ("give" | "take"), who, amount, reason @ ..] => {
+                (*verb == "give", *who, *amount, reason.join(" "))
             }
-            _ => vec![Out::Error(USAGE.into())],
+            _ => return vec![Out::Error(USAGE.into())],
+        };
+        let Some(amount) = parse_amount(amount) else {
+            return vec![Out::Error(
+                "The amount must be a positive whole number.".into(),
+            )];
+        };
+        let reason = reason.trim().to_owned();
+        if give && reason.chars().count() < 3 {
+            return vec![Out::Error(
+                "Say why: /eco give <player> <amount> <reason> (an event prize, a bug refund...)"
+                    .into(),
+            )];
+        }
+        let Some((uuid, account)) = self.find(who) else {
+            return vec![Out::Error(format!("No player named {who} has an account."))];
+        };
+        let name = account.name.clone();
+        let by = uuid_string(me.uuid);
+        let (kind, delta) = if give {
+            ("eco_give", amount)
+        } else {
+            ("eco_take", -amount)
+        };
+        match self.adjust_why(kind, uuid, delta, &by, &reason) {
+            Ok(_) if give => vec![Out::All(format!(
+                "{} gave {} to {name}: {reason}.",
+                me.name,
+                self.money(amount)
+            ))],
+            Ok(after) => vec![Out::Reply(format!(
+                "Took {} from {name}. They have {}.",
+                self.money(amount),
+                self.money(after)
+            ))],
+            Err(e) => vec![Out::Error(e)],
         }
     }
 }
@@ -1067,90 +1054,151 @@ mod tests {
     }
 
     #[test]
-    fn nobody_makes_money_and_eco_take_goes_to_the_treasury() {
+    fn operators_give_with_a_reason_and_take_and_both_are_logged() {
         let (mut e, dir) = economy("eco");
         let op = player(ALEX, "Alex", 4);
-        for line in [
-            "eco give Steve 5",
-            "money give * 1000",
-            "eco set Steve 1234567",
-            "eco add Steve 1",
-        ] {
-            assert!(
-                matches!(&e.command(&op, &[], line).unwrap()[0], Out::Error(s) if s.starts_with("Nobody can make money")),
-                "{line}"
-            );
-        }
         assert_eq!(
-            e.command(&player(ALEX, "Alex", 2), &[], "eco take Steve 5")
+            e.command(&player(ALEX, "Alex", 2), &[], "eco give Steve 5 a prize")
                 .unwrap(),
             [Out::Error("Only operators of level 3 may use /eco.".into())]
         );
+        assert!(
+            matches!(&e.command(&op, &[], "eco give Steve 5").unwrap()[0], Out::Error(s) if s.starts_with("Say why")),
+            "a gift needs its reason"
+        );
+        assert!(
+            matches!(&e.command(&op, &[], "eco set Steve 5").unwrap()[0], Out::Error(s) if s.starts_with("Usage"))
+        );
+        assert_eq!(
+            e.command(&op, &[], "money give Steve 50 build contest")
+                .unwrap(),
+            [Out::All(
+                "Alex gave 50 coins to Steve: build contest.".into()
+            )]
+        );
         assert_eq!(
             e.command(&op, &[], "eco take Steve 200").unwrap(),
-            [Out::Error("Only 100 coins there.".into())]
+            [Out::Error("Only 150 coins there.".into())]
         );
         assert_eq!(
             e.command(&op, &[], "eco take Steve 40 duped diamonds")
                 .unwrap(),
             [Out::Reply(
-                "Took 40 coins from Steve into the Treasury. They have 60 coins.".into()
+                "Took 40 coins from Steve. They have 110 coins.".into()
             )]
         );
-        assert_eq!((e.balance(STEVE), e.pool(TREASURY)), (60, 40));
-        assert_eq!(e.treasury().income["eco_take"], 40);
-        let m = e.treasury().log.last().unwrap();
+        assert_eq!(e.balance(STEVE), 110);
+        let flows = e.flows();
         assert_eq!(
-            (m.player.as_str(), m.reason.as_str(), m.by.as_str()),
-            ("Steve", "duped diamonds", "Alex")
+            (flows.minted["eco_give"], flows.burned["eco_take"]),
+            (50, 40)
         );
         let log = log_lines(&dir);
-        let last = log.last().unwrap();
+        let [.., give, take] = &log[..] else {
+            panic!("{log:?}")
+        };
         assert_eq!(
-            (last["kind"].as_str(), last["to_pool"].as_str()),
-            (Some("eco_take"), Some("treasury"))
+            (
+                give["kind"].as_str(),
+                give["reason"].as_str(),
+                give["amount"].as_i64()
+            ),
+            (Some("eco_give"), Some("build contest"), Some(50))
         );
-        assert_eq!(last["by"], uuid_string(ALEX));
-        // Total money (balances + pools) never changed: 2 accounts of 100.
-        assert_eq!(e.balance(ALEX) + e.balance(STEVE) + e.pool(TREASURY), 200);
+        assert_eq!(
+            (
+                take["kind"].as_str(),
+                take["reason"].as_str(),
+                take["from"].as_str()
+            ),
+            (
+                Some("eco_take"),
+                Some("duped diamonds"),
+                Some(uuid_string(STEVE).as_str())
+            )
+        );
+        assert_eq!(take["by"], uuid_string(ALEX));
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn pools_pay_only_what_they_hold_and_survive_a_restart() {
         let (mut e, dir) = economy("pools");
-        e.to_pool("vat", ALEX, TREASURY, 30, "").unwrap();
+        e.to_pool("ah_bid", ALEX, "ah", 30, "").unwrap();
         assert!(
-            e.to_pool("vat", ALEX, TREASURY, 71, "").is_err(),
+            e.to_pool("ah_bid", ALEX, "ah", 71, "").is_err(),
             "more than Alex has"
         );
         assert!(
-            e.from_pool("grant", TREASURY, STEVE, 31, "event").is_err(),
-            "more than the Treasury holds"
+            e.from_pool("ah_sale", "ah", STEVE, 31, "").is_err(),
+            "more than the pool holds"
         );
-        e.from_pool("grant", TREASURY, STEVE, 10, "event prize")
+        e.from_pool("ah_sale", "ah", STEVE, 10, "").unwrap();
+        e.pool_move("test", "ah", "casino", 5, "").unwrap();
+        e.mint_pool("casino_float", "casino", 100, "the casino's float")
             .unwrap();
-        e.pool_move("insurance_fund", TREASURY, INSURANCE, 5, "")
-            .unwrap();
-        assert_eq!((e.pool(TREASURY), e.pool(INSURANCE)), (15, 5));
+        assert_eq!((e.pool("ah"), e.pool("casino")), (15, 105));
         assert_eq!((e.balance(ALEX), e.balance(STEVE)), (70, 110));
-        let t = e.treasury();
-        assert_eq!(
-            (t.income["vat"], t.spent["grant"], t.spent["insurance_fund"]),
-            (30, 10, 5)
-        );
-        assert_eq!(t.income_today["vat"], 30);
+        assert_eq!(e.flows().minted["casino_float"], 100);
         // Pools are nobody's: not in the ranking.
         assert_eq!(e.accounts().len(), 2);
         e.save().unwrap();
         let again = Economy::open(&dir, Config::default()).unwrap();
-        assert_eq!((again.pool(TREASURY), again.pool(INSURANCE)), (15, 5));
-        assert_eq!(again.treasury().log.len(), 3);
+        assert_eq!((again.pool("ah"), again.pool("casino")), (15, 105));
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn settle_pool_never_pays_more_than_the_pool_and_award_fees_go_to_the_treasury() {
+    fn a_world_from_before_0_30_gets_its_savings_and_margins_back() {
+        let dir = std::env::temp_dir().join(format!("smp-eco-retire-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let (a, s) = (uuid_string(ALEX), uuid_string(STEVE));
+        let old = serde_json::json!({
+            "accounts": {a.clone(): {"name": "Alex", "balance": 10}, s.clone(): {"name": "Steve", "balance": 20}},
+            "pools": {"treasury": 5000, "insurance": 300, "bank": 700, "futures": 90, "casino": 40},
+            "treasury": {"income": {"vat": 12}, "log": []},
+            "ext": {
+                "bank": {"accounts": {a.clone(): {"amount": 500, "low": 500, "earned": 3}, s.clone(): {"amount": 200}}},
+                "futures": {"positions": [{"id": 1, "owner": s.clone(), "name": "Steve", "item": "minecraft:diamond",
+                                           "long": true, "size": 1.0, "entry": 200.0, "margin": 90, "leverage": 2, "opened": 0}]},
+                "jobs": {"day": 3},
+                "tax": {"week": 2},
+                "auction": {"listings": []}
+            }
+        });
+        fs::write(dir.join("economy.json"), old.to_string()).unwrap();
+        let mut e = Economy::open(&dir, Config::default()).unwrap();
+        assert_eq!((e.balance(ALEX), e.balance(STEVE)), (510, 310));
+        assert_eq!(
+            e.pools().keys().collect::<Vec<_>>(),
+            ["casino"],
+            "the retired pools are gone"
+        );
+        assert!(
+            e.ext("bank").is_none()
+                && e.ext("futures").is_none()
+                && e.ext("jobs").is_none()
+                && e.ext("tax").is_none()
+        );
+        assert!(e.ext("auction").is_some(), "the auction house stays");
+        let kinds: Vec<_> = log_lines(&dir)
+            .iter()
+            .map(|l| l["kind"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(kinds, ["bank_closed", "bank_closed", "futures_closed"]);
+        e.save().unwrap();
+        let saved = fs::read_to_string(dir.join("economy.json")).unwrap();
+        assert!(!saved.contains("treasury"), "{saved}");
+        // Only once.
+        let again = Economy::open(&dir, Config::default()).unwrap();
+        assert_eq!((again.balance(ALEX), again.balance(STEVE)), (510, 310));
+        assert_eq!(log_lines(&dir).len(), 3);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settle_pool_never_pays_more_than_the_pool_and_award_pays_the_stakes() {
         let (mut e, dir) = economy("settle");
         e.hold("bet", ALEX, 50).unwrap();
         // The pool held nothing: a 1,000 payout is capped at the stake.
@@ -1166,21 +1214,14 @@ mod tests {
             e.settle_pool("roulette", ALEX, 10, 0, "casino").is_err(),
             "nothing held"
         );
-        // A coinflip with a 10% fee: the fee is the Treasury's.
+        // A coinflip: the winner gets both stakes, no fee.
         e.hold("coinflip_stake", ALEX, 50).unwrap();
         e.hold("coinflip_stake", STEVE, 50).unwrap();
-        e.award("coinflip_win", &[(ALEX, 50), (STEVE, 50)], STEVE, 90)
+        e.award("coinflip_win", &[(ALEX, 50), (STEVE, 50)], STEVE)
             .unwrap();
-        assert_eq!(
-            (e.balance(ALEX), e.balance(STEVE), e.pool(TREASURY)),
-            (10, 140, 10)
-        );
-        assert_eq!(e.treasury().income["gambling_fee"], 10);
+        assert_eq!((e.balance(ALEX), e.balance(STEVE)), (10, 150));
         // Nothing made: 200 at the start.
-        assert_eq!(
-            e.balance(ALEX) + e.balance(STEVE) + e.pool(TREASURY) + e.pool("casino"),
-            200
-        );
+        assert_eq!(e.balance(ALEX) + e.balance(STEVE) + e.pool("casino"), 200);
         fs::remove_dir_all(dir).unwrap();
     }
 

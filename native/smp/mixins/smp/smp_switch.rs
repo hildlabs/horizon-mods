@@ -2,8 +2,7 @@
 // off (`/smp off [part] [reason]`) and on again (`/smp on [part]`) while the
 // server runs, kept in `switches.json` so a restart keeps them off. A part
 // that is off takes no command and no menu click, and its timed work (daily
-// rewards, interest, contracts, taxes, auctions ending, futures marking, the
-// lottery's draw) waits; nothing held is lost: it goes on when the part is on
+// rewards, auctions ending, the lottery's draw) waits; nothing held is lost: it goes on when the part is on
 // again. `/smp off` alone turns off every part but land protection, which an
 // operator turns off by name (`/smp off claims`). No game types. Added to the
 // game as `game::smp_switch`; also a module of this crate, for its tests.
@@ -22,8 +21,7 @@ pub const COMMANDS: [&str; 1] = ["smp"];
 /// A part of the SMP that can be turned off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Part {
-    /// Balances, `/pay`, `/eco`, the Treasury, taxes, the bank, contracts and
-    /// the daily reward.
+    /// Balances, `/pay`, `/eco` and the daily reward.
     Economy,
     /// `/worth`, `/sell`, `/buy`, `/shop`, `/market`.
     Market,
@@ -33,8 +31,6 @@ pub enum Part {
     Trades,
     /// `/coinflip`, `/lottery`, `/casino`.
     Gambling,
-    /// `/futures`.
-    Futures,
     /// Spawn, homes, warps, `/tpa`, `/back`.
     Places,
     /// Land protection and `/claim`.
@@ -50,13 +46,12 @@ pub enum Part {
 }
 
 impl Part {
-    pub const ALL: [Part; 12] = [
+    pub const ALL: [Part; 11] = [
         Part::Economy,
         Part::Market,
         Part::Auction,
         Part::Trades,
         Part::Gambling,
-        Part::Futures,
         Part::Places,
         Part::Claims,
         Part::Board,
@@ -72,7 +67,6 @@ impl Part {
             Part::Auction => "auction",
             Part::Trades => "trades",
             Part::Gambling => "gambling",
-            Part::Futures => "futures",
             Part::Places => "places",
             Part::Claims => "claims",
             Part::Board => "board",
@@ -92,13 +86,11 @@ impl Part {
     /// what isn't the SMP's.
     pub fn of_command(word: &str) -> Option<Part> {
         Some(match word {
-            "balance" | "bal" | "pay" | "baltop" | "eco" | "money" | "treasury" | "taxes"
-            | "bank" | "jobs" => Part::Economy,
+            "balance" | "bal" | "pay" | "baltop" | "eco" | "money" => Part::Economy,
             "worth" | "sell" | "buy" | "shop" | "market" => Part::Market,
             "ah" => Part::Auction,
             "trade" => Part::Trades,
             "coinflip" | "lottery" | "casino" => Part::Gambling,
-            "futures" => Part::Futures,
             "claim" | "unclaim" | "claims" | "trust" | "untrust" => Part::Claims,
             "sidebar" => Part::Board,
             "afk" => Part::Presence,
@@ -305,7 +297,6 @@ pub fn refusal(part: Part) -> Out {
             Part::Auction => "The auction house",
             Part::Trades => "Trading",
             Part::Gambling => "Gambling",
-            Part::Futures => "Futures",
             Part::Places => "Teleporting",
             Part::Claims => "Claiming",
             Part::Board => "The sidebar",
@@ -376,8 +367,7 @@ mod tests {
         // The glue's own (its `COMMANDS`), then each part's.
         let glue = [
             "balance", "bal", "pay", "baltop", "eco", "money", "worth", "sell", "buy", "shop",
-            "market", "trade", "coinflip", "lottery", "treasury", "taxes", "ah", "bank", "jobs",
-            "casino", "futures",
+            "market", "trade", "coinflip", "lottery", "ah", "casino",
         ];
         let parts = [
             &super::super::smp_places::COMMANDS[..],

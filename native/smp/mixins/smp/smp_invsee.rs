@@ -163,7 +163,9 @@ impl<S: Stack> Invsee<S> {
             return Some((vec![Out::Error(format!("Usage: /{name} <player>"))], None));
         };
         match find(who) {
-            Some((uuid, _)) if uuid == me.uuid => {
+            // Your own inventory would move stacks into itself; your own
+            // ender chest is a second container, so an operator may open it.
+            Some((uuid, _)) if uuid == me.uuid && kind == Kind::Player => {
                 Some((vec![Out::Error("That is your own inventory.".into())], None))
             }
             Some((uuid, real)) => Some((Vec::new(), Some((uuid, real, kind)))),
@@ -495,6 +497,10 @@ mod tests {
         assert_eq!(
             i.command(&op(), &find, "invsee Boss").unwrap().0,
             [Out::Error("That is your own inventory.".into())]
+        );
+        assert_eq!(
+            i.command(&op(), &find, "endersee Boss").unwrap().1,
+            Some((1, "Boss".into(), Kind::Ender))
         );
         assert_eq!(
             i.command(&op(), &find, "endersee Nobody").unwrap().0,

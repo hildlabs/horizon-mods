@@ -1,0 +1,31 @@
+id = "accurate_block_placement"
+kind = "native-mod"
+name = "Accurate Block Placement"
+summary = "Hold right click with a block and every new spot you look at gets one, however fast you move."
+description = """
+Placing blocks fast is all about timing: vanilla places a block every four ticks while you hold right click, so moving fast skips spots and moving slowly stacks extra blocks. **Accurate Block Placement** times it for you: hold right click and every *new* spot you look at gets a block at once.
+
+- **A new spot, a block**: bridging, building walls and floors, or sweeping along a row; no spot skipped, however fast you move.
+- **No extra blocks**: staring at one spot places nothing more.
+- **A single click stays a single block**: right after the click it waits as vanilla does, unless you turn the view.
+- **Building backwards**: walking backwards while placing toward yourself places one block per step.
+- Doors, chests, buttons and other blocks you click still work as usual.
+
+**Settings** (Options > Mods > Accurate Block Placement): turn it on or off, bind a key to toggle it (unbound by default), and choose whether it works on servers.
+
+Some servers see fast, accurate placing as a cheat: check their rules, or turn "Allowed on servers" off.
+
+A port of [Accurate Block Placement: Reborn](https://modrinth.com/mod/accurate-block-placement-reborn) (MIT) by Clayborn, Flourick, schwar and KadTheHunter, rewritten in Rust for Horizon."""
+authors = ["Lutziano888"]
+owners = ["Lutziano888"]
+license = "MIT"
+source = "https://github.com/Lutziano888/horizon-accurate-block-placement"
+icon = "https://raw.githubusercontent.com/Lutziano888/horizon-accurate-block-placement/main/icon.png"
+
+[[versions]]
+version = "1.0.0"
+published = "2026-11-03"
+game = "26.3"
+file = "accurate_block_placement-1.0.0.hnmod"
+sha256 = "e631745f6d267360de6eb51995ee995bf1ab3d64393d287b7b93c332b85939ce"
+changelog = "First release."

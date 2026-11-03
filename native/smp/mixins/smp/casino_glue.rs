@@ -132,7 +132,7 @@ pub(in crate::game) fn clicked(
 }
 
 /// The casino's share of the server's tick: frames, rounds that end, the
-/// pot's hourly sweep. The console commands, for after the lock.
+/// pot's float (once). The console commands, for after the lock.
 pub(in crate::game) fn tick(
     game: &mut Game<'_>,
     casino: &mut Casino,

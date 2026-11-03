@@ -1,6 +1,6 @@
 // The auction house (`/ah`): players sell to players. A listing is a fixed
-// price or a timed auction; listing costs a fee and each sale pays VAT, both
-// to the Treasury. Listed items leave the seller's inventory at once; what
+// price or a timed auction; listing is free, and a sale pays the seller the
+// whole price. Listed items leave the seller's inventory at once; what
 // doesn't sell (and what an auction's winner gets) waits in the player's mail
 // (`/ah claim`, or the menu's mail page). Bids are held in the `auction`
 // pool until the auction ends or someone bids more. A bid in the last
@@ -13,13 +13,16 @@
 // action on its one server thread, under the SMP's lock: of two players who
 // buy the same listing at once, the second finds it gone.
 //
-// Plain items only for now (not worn, named or enchanted): the hook point
-// that gives a whole stack with its components (`native_give_stack`) isn't
-// stamped yet. No game types: the glue lends the items (`Bag`) and draws the
-// menu from `Cell`s. Added to the game as `game::smp_auction`; also a module
-// of this crate, for its tests.
+// A listing carries the whole stack: its enchantments, name, damage,
+// contents (a shulker box's, a bundle's) and every other component, kept as
+// the glue encodes it (`Whole::data`) and given back exactly so
+// (`native_give_stack`). Listings and mail from before 0.31 hold plain items
+// by id and count (no `stack`) and are given back as they were. No game
+// types: the glue lends the items (`Hand`) and draws the menu from `Cell`s.
+// Added to the game as `game::smp_auction`; also a module of this crate, for
+// its tests.
 
-use super::smp_economy::{DAY_MS, Economy, MAX_AMOUNT, Out, Player, TREASURY, parse_amount};
+use super::smp_economy::{DAY_MS, Economy, MAX_AMOUNT, Out, Player, parse_amount};
 use super::smp_market::{Bag, item_name, valid_id};
 use super::smp_shop::{Category, title};
 use super::smp_store::{parse_uuid, uuid_string};
@@ -57,9 +60,6 @@ const CATEGORY_SLOTS: [usize; 21] = [
 #[serde(default)]
 pub struct Config {
     pub enabled: bool,
-    /// Paid when listing, in percent of the price (or starting bid), at
-    /// least 1 coin; to the Treasury, never given back.
-    pub listing_fee_percent: i64,
     /// Listings one player may have at once.
     pub max_listings: usize,
     /// How long a fixed-price listing stays.
@@ -77,7 +77,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enabled: true,
-            listing_fee_percent: 1,
             max_listings: 8,
             listing_hours: 48,
             auction_hours: 12,
@@ -102,6 +101,10 @@ pub struct Listing {
     pub seller_name: String,
     pub item: String,
     pub count: u32,
+    /// The whole stack as the glue encodes it; None: `count` plain `item`
+    /// (a listing from before 0.31).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
     /// The price (fixed), or the starting bid (auction).
     pub price: i64,
     pub auction: bool,
@@ -123,6 +126,9 @@ impl Listing {
 pub struct Parcel {
     pub item: String,
     pub count: u32,
+    /// The whole stack, as `Listing::stack`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
     /// `expired`, `won`, `cancelled`...
     pub why: String,
 }
@@ -143,8 +149,6 @@ pub struct Today {
     pub day: i64,
     pub sales: u32,
     pub volume: i64,
-    pub fees: i64,
-    pub vat: i64,
 }
 
 /// What `economy.json`'s `ext.auction` holds.
@@ -158,6 +162,91 @@ pub struct Data {
     pub notes: BTreeMap<String, Vec<String>>,
     pub sales: Vec<Sale>,
     pub today: Today,
+}
+
+/// A whole stack as the glue lends it: its id and count (what lines and
+/// menus show) and the stack itself in the glue's encoding, every component
+/// kept. The glue's encoding is the truth; `item` and `count` repeat it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Whole {
+    pub item: String,
+    pub count: u32,
+    pub data: String,
+}
+
+/// The acting player's items, whole stacks too.
+pub trait Hand: Bag {
+    /// The main hand's stack (None: empty hand), or why it can't be sold.
+    fn held_whole(&self) -> Option<Result<Whole, String>>;
+    /// Takes `count` of the main hand's stack while it is still exactly
+    /// `held`: the part taken (the rest stays in the hand), or None and
+    /// nothing moved.
+    fn take_held(&mut self, held: &Whole, count: u32) -> Option<Whole>;
+    /// Whether `stack` fits whole in the inventory.
+    fn fits(&mut self, stack: &Whole) -> bool;
+    /// Gives `stack` where it fits: what didn't fit (None: all of it given).
+    fn give_whole(&mut self, stack: &Whole) -> Option<Whole>;
+}
+
+/// Items on their way: plain (`stack` None) or one whole stack.
+struct Goods {
+    item: String,
+    count: u32,
+    stack: Option<String>,
+}
+
+impl Goods {
+    fn of(l: &Listing) -> Self {
+        Self {
+            item: l.item.clone(),
+            count: l.count,
+            stack: l.stack.clone(),
+        }
+    }
+    fn whole(&self) -> Option<Whole> {
+        self.stack.as_ref().map(|data| Whole {
+            item: self.item.clone(),
+            count: self.count,
+            data: data.clone(),
+        })
+    }
+    /// Whether they fit in `bag` now.
+    fn fit(&self, bag: &mut dyn Hand) -> bool {
+        match self.whole() {
+            Some(w) => bag.fits(&w),
+            None => bag.room(&self.item) >= self.count,
+        }
+    }
+    /// Gives them: how many went, and what is left (None: all went).
+    fn give(&self, bag: &mut dyn Hand) -> (u32, Option<Goods>) {
+        match self.whole() {
+            Some(w) => match bag.give_whole(&w) {
+                None => (self.count, None),
+                Some(rest) => (
+                    self.count.saturating_sub(rest.count),
+                    Some(Goods {
+                        item: rest.item,
+                        count: rest.count,
+                        stack: Some(rest.data),
+                    }),
+                ),
+            },
+            None => {
+                let given = if self.count > 0 {
+                    bag.give(&self.item, self.count)
+                } else {
+                    0
+                };
+                let left = self.count - given.min(self.count);
+                let rest = (left > 0).then(|| Goods {
+                    item: self.item.clone(),
+                    count: left,
+                    stack: None,
+                });
+                (given, rest)
+            }
+        }
+    }
 }
 
 /// Which listings a list page shows.
@@ -238,6 +327,19 @@ pub struct AuctionHouse {
     /// Money moves that failed after the items moved (the audit log
     /// couldn't be written): the glue logs them.
     pub problems: Vec<String>,
+}
+
+/// `2d 5h`, `3h 05m`, `12m`: the time left on a listing.
+fn span(ms: i64) -> String {
+    let m = ms.max(0) / 60_000;
+    let (d, h, m) = (m / 1440, m / 60 % 24, m % 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m:02}m")
+    } else {
+        format!("{m}m")
+    }
 }
 
 /// `price * percent / 100`, without overflow.
@@ -335,8 +437,8 @@ impl AuctionHouse {
     }
 
     /// Items to `uuid`'s mail.
-    fn post(&mut self, uuid: &str, item: &str, count: u32, why: &str) {
-        if count == 0 {
+    fn post(&mut self, uuid: &str, goods: Goods, why: &str) {
+        if goods.count == 0 {
             return;
         }
         self.data
@@ -344,8 +446,9 @@ impl AuctionHouse {
             .entry(uuid.to_owned())
             .or_default()
             .push(Parcel {
-                item: item.to_owned(),
-                count,
+                item: goods.item,
+                count: goods.count,
+                stack: goods.stack,
                 why: why.to_owned(),
             });
         self.dirty = true;
@@ -377,11 +480,10 @@ impl AuctionHouse {
         &mut self.data.today
     }
 
-    fn record_sale(&mut self, l: &Listing, price: i64, vat: i64, now: i64) {
+    fn record_sale(&mut self, l: &Listing, price: i64, now: i64) {
         let t = self.count_today(now);
         t.sales += 1;
         t.volume = t.volume.saturating_add(price);
-        t.vat = t.vat.saturating_add(vat);
         self.data.sales.push(Sale {
             time: now,
             item: l.item.clone(),
@@ -399,24 +501,17 @@ impl AuctionHouse {
         format!("{} {}", l.count, item_name(&l.item))
     }
 
-    /// Pays the seller `price` (from the buyer, or from the bids' pool),
-    /// then the VAT from it to the Treasury: what the VAT was.
+    /// Pays the seller `price` (from the buyer, or from the bids' pool).
     fn pay_seller(
         economy: &mut Economy,
         from: Result<u128, ()>,
         seller: u128,
         price: i64,
-        vat_percent: i64,
-    ) -> Result<i64, String> {
+    ) -> Result<(), String> {
         match from {
-            Ok(buyer) => economy.transfer("ah_sale", buyer, seller, price)?,
-            Err(()) => economy.from_pool("ah_sale", POOL, seller, price, "")?,
+            Ok(buyer) => economy.transfer("ah_sale", buyer, seller, price),
+            Err(()) => economy.from_pool("ah_sale", POOL, seller, price, ""),
         }
-        let vat = percent(price, vat_percent);
-        if vat > 0 {
-            economy.to_pool("vat", seller, TREASURY, vat, "auction house sale")?;
-        }
-        Ok(vat)
     }
 
     /// Runs `/ah ...`; None for another command. `bag`: the acting player's
@@ -427,8 +522,7 @@ impl AuctionHouse {
         economy: &mut Economy,
         me: &Player,
         trades: bool,
-        bag: &mut dyn Bag,
-        vat_percent: i64,
+        bag: &mut dyn Hand,
         now: i64,
         line: &str,
     ) -> Option<Reply> {
@@ -485,7 +579,7 @@ impl AuctionHouse {
                 _ => err("Usage: /ah bid <listing> <amount>"),
             },
             ["buy", id] => match id.parse::<u64>() {
-                Ok(id) => out(self.buy(economy, me, bag, id, vat_percent, now)),
+                Ok(id) => out(self.buy(economy, me, bag, id, now)),
                 Err(_) => err("Usage: /ah buy <listing>"),
             },
             ["cancel", id] => match id.parse::<u64>() {
@@ -512,7 +606,7 @@ impl AuctionHouse {
         &mut self,
         economy: &mut Economy,
         me: &Player,
-        bag: &mut dyn Bag,
+        bag: &mut dyn Hand,
         price: &str,
         count: Option<u32>,
         hours: Option<i64>,
@@ -536,48 +630,55 @@ impl AuctionHouse {
                 self.config.max_listings
             ));
         }
-        let Some((item, held, plain)) = bag.held() else {
-            return err("Hold the items you want to sell.".into());
+        let held = match bag.held_whole() {
+            None => return err("Hold the items you want to sell.".into()),
+            Some(Err(why)) => return err(why),
+            Some(Ok(h)) => h,
         };
-        if !plain || !valid_id(&item) {
-            return err(
-                "The auction house takes only plain items for now (not worn, named or enchanted)."
-                    .into(),
-            );
+        if !valid_id(&held.item) {
+            return err("That item can't be sold here.".into());
         }
-        let count = count.unwrap_or(held);
-        if count == 0 || count > held {
-            return err(format!("You hold {held} {}.", item_name(&item)));
+        let count = count.unwrap_or(held.count);
+        if count == 0 || count > held.count {
+            return err(format!(
+                "You hold {} {}.",
+                held.count,
+                item_name(&held.item)
+            ));
         }
-        let fee = percent(price, self.config.listing_fee_percent).max(1);
-        if economy.balance(me.uuid) < fee {
-            return err(format!("Listing costs {}.", economy.money(fee)));
-        }
-        let taken = bag.take(&item, count);
-        if taken != count {
-            bag.give(&item, taken);
+        // The stack leaves the hand before anything is written: from here
+        // on it is either listed or given back, never both.
+        let Some(taken) = bag.take_held(&held, count) else {
             return err("Those items couldn't be taken.".into());
-        }
+        };
         self.data.next_id += 1;
         let id = self.data.next_id;
         let ends = now + hours.unwrap_or(self.config.listing_hours).max(1) * 3_600_000;
         let entry = serde_json::json!({
-            "kind": "ah_list", "id": id, "seller": mine, "item": &item, "count": count,
-            "price": price, "auction": hours.is_some(), "ends": ends,
+            "kind": "ah_list", "id": id, "seller": mine, "item": &taken.item, "count": taken.count,
+            "stack": &taken.data, "price": price, "auction": hours.is_some(), "ends": ends,
         });
-        if let Err(e) = economy
-            .record(entry)
-            .and_then(|()| economy.to_pool("ah_listing_fee", me.uuid, TREASURY, fee, ""))
-        {
-            bag.give(&item, taken);
+        if let Err(e) = economy.record(entry) {
+            self.data.next_id -= 1;
+            // Back whole; what doesn't fit (it came from the hand: nothing,
+            // unless the hand filled meanwhile) waits in the mail.
+            if let Some(rest) = bag.give_whole(&taken) {
+                let goods = Goods {
+                    item: rest.item,
+                    count: rest.count,
+                    stack: Some(rest.data),
+                };
+                self.post(&mine, goods, "not listed");
+            }
             return err(e);
         }
         let l = Listing {
             id,
             seller: mine,
             seller_name: me.name.clone(),
-            item,
-            count,
+            item: taken.item,
+            count: taken.count,
+            stack: Some(taken.data),
             price,
             auction: hours.is_some(),
             bid: None,
@@ -586,22 +687,19 @@ impl AuctionHouse {
         };
         let line = match hours {
             None => format!(
-                "Listed #{id}: {} for {} ({:.2} each), {}h. Fee: {}.",
+                "Listed #{id}: {} for {} ({:.2} each), {}h.",
                 Self::what(&l),
                 economy.money(price),
-                price as f64 / f64::from(count),
-                self.config.listing_hours,
-                economy.money(fee)
+                price as f64 / f64::from(l.count.max(1)),
+                self.config.listing_hours
             ),
             Some(h) => format!(
-                "Auction #{id}: {} from {}, ends in {h}h. Fee: {}.",
+                "Auction #{id}: {} from {}, ends in {h}h.",
                 Self::what(&l),
-                economy.money(price),
-                economy.money(fee)
+                economy.money(price)
             ),
         };
         self.data.listings.push(l);
-        self.count_today(now).fees += fee;
         self.dirty = true;
         vec![Out::Reply(line)]
     }
@@ -621,9 +719,8 @@ impl AuctionHouse {
         &mut self,
         economy: &mut Economy,
         me: &Player,
-        bag: &mut dyn Bag,
+        bag: &mut dyn Hand,
         id: u64,
-        vat_percent: i64,
         now: i64,
     ) -> Vec<Out> {
         let err = |s: String| vec![Out::Error(s)];
@@ -651,12 +748,12 @@ impl AuctionHouse {
         let Some(seller) = parse_uuid(&l.seller) else {
             return err("That listing is damaged.".into());
         };
-        if bag.room(&l.item) < l.count {
+        if !Goods::of(&l).fit(bag) {
             return err(format!("Make room for {} first.", Self::what(&l)));
         }
         let entry = serde_json::json!({
             "kind": "ah_buy", "id": id, "buyer": uuid_string(me.uuid), "seller": &l.seller,
-            "item": &l.item, "count": l.count, "price": l.price,
+            "item": &l.item, "count": l.count, "stack": &l.stack, "price": l.price,
         });
         if let Err(e) = economy.record(entry) {
             return err(e);
@@ -664,20 +761,18 @@ impl AuctionHouse {
         // The listing leaves first: nothing can sell it twice.
         self.data.listings.remove(i);
         self.dirty = true;
-        let given = bag.give(&l.item, l.count);
+        let (given, rest) = Goods::of(&l).give(bag);
         if given == 0 {
             self.data.listings.insert(i, l);
             return err("The items couldn't be given: nothing was bought.".into());
         }
-        self.post(&uuid_string(me.uuid), &l.item, l.count - given, "bought");
-        let vat = match Self::pay_seller(economy, Ok(me.uuid), seller, l.price, vat_percent) {
-            Ok(v) => v,
-            Err(e) => {
-                self.problems.push(format!("auction house sale #{id}: {e}"));
-                0
-            }
-        };
-        self.record_sale(&l, l.price, vat, now);
+        if let Some(rest) = rest {
+            self.post(&uuid_string(me.uuid), rest, "bought");
+        }
+        if let Err(e) = Self::pay_seller(economy, Ok(me.uuid), seller, l.price) {
+            self.problems.push(format!("auction house sale #{id}: {e}"));
+        }
+        self.record_sale(&l, l.price, now);
         let mut out = vec![Out::Reply(format!(
             "Bought {} from {} for {}.{}",
             Self::what(&l),
@@ -690,11 +785,10 @@ impl AuctionHouse {
             }
         ))];
         let line = format!(
-            "{} bought your {} for {} (VAT {}).",
+            "{} bought your {} for {}.",
             me.name,
             Self::what(&l),
-            economy.money(l.price - vat),
-            economy.money(vat)
+            economy.money(l.price)
         );
         self.notify(&mut out, &l.seller, line);
         out
@@ -778,7 +872,7 @@ impl AuctionHouse {
                 "You bid {} on #{id} ({}), ends in {}.{}",
                 economy.money(amount),
                 Self::what(&l),
-                super::smp_tax::span(l.ends - now),
+                span(l.ends - now),
                 if extended {
                     " A late bid: the end moved back."
                 } else {
@@ -803,16 +897,13 @@ impl AuctionHouse {
             return vec![Out::Error("Someone bid on it: it runs to its end.".into())];
         }
         let l = self.data.listings.remove(i);
-        self.post(&l.seller, &l.item, l.count, "withdrawn");
-        vec![Out::Reply(format!(
-            "Took #{id} ({}) back. The fee stays paid.",
-            Self::what(&l)
-        ))]
+        self.post(&l.seller, Goods::of(&l), "withdrawn");
+        vec![Out::Reply(format!("Took #{id} ({}) back.", Self::what(&l)))]
     }
 
     /// Gives `uuid` their mail (one parcel, or all of it), as much as fits;
     /// the rest stays.
-    pub fn claim(&mut self, uuid: u128, bag: &mut dyn Bag, only: Option<usize>) -> Vec<Out> {
+    pub fn claim(&mut self, uuid: u128, bag: &mut dyn Hand, only: Option<usize>) -> Vec<Out> {
         let key = uuid_string(uuid);
         let Some(mut parcels) = self.data.mail.remove(&key) else {
             return vec![Out::Reply("Your mail is empty.".into())];
@@ -823,9 +914,33 @@ impl AuctionHouse {
             if only.is_some_and(|o| o != i) {
                 continue;
             }
-            let n = p.count.min(bag.room(&p.item));
-            let given = if n > 0 { bag.give(&p.item, n) } else { 0 };
-            p.count -= given.min(p.count);
+            let goods = Goods {
+                item: p.item.clone(),
+                count: p.count,
+                stack: p.stack.clone(),
+            };
+            let given = match &goods.stack {
+                // Plain: as much as there is room for.
+                None => {
+                    let n = p.count.min(bag.room(&p.item));
+                    let given = if n > 0 { bag.give(&p.item, n) } else { 0 };
+                    p.count -= given.min(p.count);
+                    given
+                }
+                // A whole stack: once it fits whole; what didn't go stays.
+                Some(_) if !goods.fit(bag) => 0,
+                Some(_) => {
+                    let (given, rest) = goods.give(bag);
+                    match rest {
+                        None => p.count = 0,
+                        Some(r) => {
+                            p.count = r.count;
+                            p.stack = r.stack;
+                        }
+                    }
+                    given
+                }
+            };
             full |= p.count > 0;
             if given > 0 {
                 given_all.push(format!("{given} {}", item_name(&p.item)));
@@ -857,13 +972,7 @@ impl AuctionHouse {
     /// Once a second: notes to the players who came on, and the listings
     /// that ended (fixed ones back to their seller, auctions to their
     /// winner). Only a comparison while nothing ended.
-    pub fn tick(
-        &mut self,
-        economy: &mut Economy,
-        online: &[u128],
-        vat_percent: i64,
-        now: i64,
-    ) -> Vec<Out> {
+    pub fn tick(&mut self, economy: &mut Economy, online: &[u128], now: i64) -> Vec<Out> {
         self.online = online.iter().copied().collect();
         let mut out = Vec::new();
         if !self.data.notes.is_empty() {
@@ -885,7 +994,7 @@ impl AuctionHouse {
         for l in ended {
             let Some(b) = l.bid.clone() else {
                 let why = if l.auction { "no bids" } else { "expired" };
-                self.post(&l.seller, &l.item, l.count, why);
+                self.post(&l.seller, Goods::of(&l), why);
                 let line = format!(
                     "#{} ({}) ended with {why}: the items are in your mail (/ah claim).",
                     l.id,
@@ -895,16 +1004,12 @@ impl AuctionHouse {
                 continue;
             };
             let seller = parse_uuid(&l.seller).unwrap_or_default();
-            let vat = match Self::pay_seller(economy, Err(()), seller, b.amount, vat_percent) {
-                Ok(v) => v,
-                Err(e) => {
-                    self.problems
-                        .push(format!("auction #{} payment: {e}", l.id));
-                    0
-                }
-            };
-            self.post(&b.uuid, &l.item, l.count, "won");
-            self.record_sale(&l, b.amount, vat, now);
+            if let Err(e) = Self::pay_seller(economy, Err(()), seller, b.amount) {
+                self.problems
+                    .push(format!("auction #{} payment: {e}", l.id));
+            }
+            self.post(&b.uuid, Goods::of(&l), "won");
+            self.record_sale(&l, b.amount, now);
             let line = format!(
                 "You won #{} ({}) for {}: the items are in your mail (/ah claim).",
                 l.id,
@@ -913,12 +1018,11 @@ impl AuctionHouse {
             );
             self.notify(&mut out, &b.uuid, line);
             let line = format!(
-                "Auction #{} ({}) sold to {} for {} (VAT {}).",
+                "Auction #{} ({}) sold to {} for {}.",
                 l.id,
                 Self::what(&l),
                 b.name,
-                economy.money(b.amount - vat),
-                economy.money(vat)
+                economy.money(b.amount)
             );
             self.notify(&mut out, &l.seller.clone(), line);
         }
@@ -1098,7 +1202,7 @@ impl AuctionHouse {
     /// A listing's name on its button.
     pub fn label(&self, l: &Listing, now: i64, money: &dyn Fn(i64) -> String) -> String {
         let each = l.amount() as f64 / f64::from(l.count.max(1));
-        let left = super::smp_tax::span(l.ends - now);
+        let left = span(l.ends - now);
         let head = format!("#{} {} {}", l.id, l.count, title(&l.item));
         if l.auction {
             let bid = match &l.bid {
@@ -1163,15 +1267,88 @@ mod tests {
     const STEVE: u128 = 2;
     const NOTCH: u128 = 3;
     const T0: i64 = 1_793_577_600_000;
-    const VAT: i64 = 5;
 
-    /// A player's inventory: plain stacks by id, 36 slots of 64.
+    /// A player's inventory: plain stacks by id, 36 slots of 64, and whole
+    /// stacks (`id|count|components`, the glue's encoding stands in), one a
+    /// slot.
     #[derive(Default)]
     struct Inv {
         hand: Option<(String, u32)>,
+        /// A whole stack in the hand (instead of `hand`).
+        hand_whole: Option<String>,
         items: BTreeMap<String, u32>,
+        wholes: Vec<String>,
         slots_free: u32,
         fail_give: bool,
+    }
+
+    /// `id|count|components` as a `Whole`.
+    fn whole(data: &str) -> Whole {
+        let mut parts = data.splitn(3, '|');
+        let item = parts.next().unwrap().to_owned();
+        let count = parts.next().unwrap().parse().unwrap();
+        Whole {
+            item,
+            count,
+            data: data.to_owned(),
+        }
+    }
+
+    fn with_count(data: &str, n: u32) -> String {
+        let p: Vec<&str> = data.splitn(3, '|').collect();
+        format!("{}|{n}|{}", p[0], p[2])
+    }
+
+    fn is_plain(data: &str) -> bool {
+        data.ends_with('|')
+    }
+
+    impl Hand for Inv {
+        fn held_whole(&self) -> Option<Result<Whole, String>> {
+            if let Some(d) = &self.hand_whole {
+                return Some(Ok(whole(d)));
+            }
+            self.held()
+                .map(|(item, n, _)| Ok(whole(&format!("{item}|{n}|"))))
+        }
+        fn take_held(&mut self, held: &Whole, count: u32) -> Option<Whole> {
+            if let Some(d) = self.hand_whole.clone() {
+                if d != held.data || count > held.count {
+                    return None;
+                }
+                let left = held.count - count;
+                self.hand_whole = (left > 0).then(|| with_count(&d, left));
+                return Some(whole(&with_count(&d, count)));
+            }
+            let taken = self.take(&held.item, count);
+            if taken != count {
+                self.give(&held.item, taken);
+                return None;
+            }
+            Some(whole(&with_count(&held.data, count)))
+        }
+        fn fits(&mut self, stack: &Whole) -> bool {
+            if is_plain(&stack.data) {
+                self.room(&stack.item) >= stack.count
+            } else {
+                self.slots_free > 0
+            }
+        }
+        fn give_whole(&mut self, stack: &Whole) -> Option<Whole> {
+            if self.fail_give {
+                return Some(stack.clone());
+            }
+            if is_plain(&stack.data) {
+                let n = self.give(&stack.item, stack.count);
+                return (n < stack.count).then(|| whole(&with_count(&stack.data, stack.count - n)));
+            }
+            if self.slots_free == 0 {
+                return Some(stack.clone());
+            }
+            self.slots_free -= 1;
+            self.wholes.push(stack.data.clone());
+            None
+        }
     }
 
     impl Bag for Inv {
@@ -1216,8 +1393,61 @@ mod tests {
             hand: Some((format!("minecraft:{item}"), n)),
             items: BTreeMap::from([(format!("minecraft:{item}"), n)]),
             slots_free: 30,
-            fail_give: false,
+            ..Inv::default()
         }
+    }
+
+    fn holding_whole(data: &str) -> Inv {
+        Inv {
+            hand_whole: Some(data.into()),
+            slots_free: 30,
+            ..Inv::default()
+        }
+    }
+
+    /// An enchanted, named, worn sword (one stack).
+    const SWORD: &str = "minecraft:diamond_sword|1|custom_name=Excalibur;enchantments={sharpness:5,unbreaking:3};damage=12";
+    /// A shulker box with its contents.
+    const SHULKER: &str = "minecraft:shulker_box|1|container=[{slot:0,id:diamond,count:64},{slot:1,id:bundle,count:1,bundle_contents=[{id:emerald,count:8}]}]";
+
+    /// Where the copies of `data` are: in bags, listings and mail.
+    fn copies(ah: &AuctionHouse, bags: &[&Inv], data: &str) -> usize {
+        let listed = ah
+            .data
+            .listings
+            .iter()
+            .filter(|l| l.stack.as_deref() == Some(data))
+            .count();
+        let mailed = ah
+            .data
+            .mail
+            .values()
+            .flatten()
+            .filter(|p| p.stack.as_deref() == Some(data))
+            .count();
+        let held = bags
+            .iter()
+            .map(|b| {
+                b.wholes.iter().filter(|w| *w == data).count()
+                    + usize::from(b.hand_whole.as_deref() == Some(data))
+            })
+            .sum::<usize>();
+        listed + mailed + held
+    }
+
+    /// Saves everything and opens it again from disk, as a restart (or a
+    /// crash right after the save) does.
+    fn reopen(
+        ah: &mut AuctionHouse,
+        e: &mut Economy,
+        dir: &std::path::Path,
+    ) -> (Economy, AuctionHouse) {
+        ah.store(e);
+        e.save().unwrap();
+        let mut e = Economy::open(dir, EcoConfig::default()).unwrap();
+        e.now = T0;
+        let ah = AuctionHouse::open(&e, Config::default());
+        (e, ah)
     }
 
     fn empty() -> Inv {
@@ -1250,7 +1480,7 @@ mod tests {
 
     /// Every coin of the game: balances and pools.
     fn total(e: &Economy) -> i64 {
-        e.balance(ALEX) + e.balance(STEVE) + e.balance(NOTCH) + e.pool(TREASURY) + e.pool(POOL)
+        e.balance(ALEX) + e.balance(STEVE) + e.balance(NOTCH) + e.pool(POOL)
     }
 
     fn run(
@@ -1261,14 +1491,14 @@ mod tests {
         now: i64,
         line: &str,
     ) -> Vec<Out> {
-        match ah.command(e, me, true, bag, VAT, now, line) {
+        match ah.command(e, me, true, bag, now, line) {
             Some(Reply::Out(o)) => o,
             other => panic!("{line}: {other:?}"),
         }
     }
 
     #[test]
-    fn a_fixed_sale_moves_items_once_and_pays_fee_and_vat_to_the_treasury() {
+    fn a_fixed_sale_moves_items_once_and_pays_the_seller_the_whole_price() {
         let (mut e, mut ah, _dir) = setup("fixed");
         let mut alex = holding("diamond", 10);
         let out = run(
@@ -1287,13 +1517,13 @@ mod tests {
             alex.items["minecraft:diamond"], 0,
             "the items left the inventory"
         );
-        assert_eq!((e.balance(ALEX), e.pool(TREASURY)), (990, 10), "1% fee");
+        assert_eq!(e.balance(ALEX), 1000, "listing is free");
         // Steve and Notch click "buy" in the same tick: one gets it.
         let mut steve = empty();
         let mut notch = empty();
         ah.online = [ALEX, STEVE, NOTCH].into();
-        let a = ah.buy(&mut e, &p(STEVE, "Steve"), &mut steve, 1, VAT, T0 + 1);
-        let b = ah.buy(&mut e, &p(NOTCH, "Notch"), &mut notch, 1, VAT, T0 + 1);
+        let a = ah.buy(&mut e, &p(STEVE, "Steve"), &mut steve, 1, T0 + 1);
+        let b = ah.buy(&mut e, &p(NOTCH, "Notch"), &mut notch, 1, T0 + 1);
         assert!(
             matches!(&a[0], Out::Reply(s) if s.starts_with("Bought 10 diamond from Alex")),
             "{a:?}"
@@ -1311,19 +1541,16 @@ mod tests {
             ),
             (10, None)
         );
-        // Alex gets 1,000 less 5% VAT; Steve paid 1,000.
+        // Alex gets the whole 1,000 Steve paid.
         assert_eq!(
             (e.balance(ALEX), e.balance(STEVE), e.balance(NOTCH)),
-            (990 + 950, 0, 1000)
+            (1000 + 1000, 0, 1000)
         );
-        assert_eq!(e.pool(TREASURY), 10 + 50);
         assert_eq!(total(&e), 3000, "nothing made, nothing lost");
         assert!(a.contains(&Out::Tell(
             ALEX,
-            "Steve bought your 10 diamond for 950 coins (VAT 50 coins).".into()
+            "Steve bought your 10 diamond for 1,000 coins.".into()
         )));
-        let t = e.treasury();
-        assert_eq!((t.income["vat"], t.income["ah_listing_fee"]), (50, 10));
     }
 
     #[test]
@@ -1347,16 +1574,16 @@ mod tests {
         );
         // Creative players can't list or buy.
         assert!(matches!(
-            ah.command(&mut e, &alex, false, &mut bag, VAT, T0, "ah sell 10"),
+            ah.command(&mut e, &alex, false, &mut bag, T0, "ah sell 10"),
             Some(Reply::Out(o)) if matches!(&o[0], Out::Error(_))
         ));
         run(&mut ah, &mut e, &alex, &mut bag, T0, "ah sell 5000 5");
         // Own listing, too poor, no room, a failed give: nothing moves.
         assert!(
-            matches!(&ah.buy(&mut e, &alex, &mut empty(), 1, VAT, T0)[0], Out::Error(s) if s.starts_with("That's your own"))
+            matches!(&ah.buy(&mut e, &alex, &mut empty(), 1, T0)[0], Out::Error(s) if s.starts_with("That's your own"))
         );
         assert!(
-            matches!(&ah.buy(&mut e, &p(STEVE, "Steve"), &mut empty(), 1, VAT, T0)[0], Out::Error(s) if s.starts_with("You only have"))
+            matches!(&ah.buy(&mut e, &p(STEVE, "Steve"), &mut empty(), 1, T0)[0], Out::Error(s) if s.starts_with("You only have"))
         );
         e.adjust("sell", STEVE, 10_000, "").unwrap();
         let mut full = Inv {
@@ -1364,7 +1591,7 @@ mod tests {
             ..Inv::default()
         };
         assert!(
-            matches!(&ah.buy(&mut e, &p(STEVE, "Steve"), &mut full, 1, VAT, T0)[0], Out::Error(s) if s.starts_with("Make room"))
+            matches!(&ah.buy(&mut e, &p(STEVE, "Steve"), &mut full, 1, T0)[0], Out::Error(s) if s.starts_with("Make room"))
         );
         let mut broken = Inv {
             slots_free: 5,
@@ -1372,7 +1599,7 @@ mod tests {
             ..Inv::default()
         };
         assert!(matches!(
-            &ah.buy(&mut e, &p(STEVE, "Steve"), &mut broken, 1, VAT, T0)[0],
+            &ah.buy(&mut e, &p(STEVE, "Steve"), &mut broken, 1, T0)[0],
             Out::Error(_)
         ));
         assert!(ah.listing(1).is_some(), "the listing stays for sale");
@@ -1437,8 +1664,7 @@ mod tests {
         );
         assert_eq!(ah.listing(1).unwrap().ends, late + 60_000);
         assert!(
-            ah.tick(&mut e, &[STEVE, NOTCH], VAT, late + 59_000)
-                .is_empty(),
+            ah.tick(&mut e, &[STEVE, NOTCH], late + 59_000).is_empty(),
             "not over yet"
         );
         // A restart mid-auction: everything comes back from economy.json.
@@ -1447,7 +1673,7 @@ mod tests {
         let mut e = Economy::open(&dir, EcoConfig::default()).unwrap();
         let mut ah = AuctionHouse::open(&e, Config::default());
         assert_eq!((e.pool(POOL), ah.listing(1).unwrap().amount()), (400, 400));
-        let out = ah.tick(&mut e, &[STEVE, NOTCH], VAT, late + 60_000);
+        let out = ah.tick(&mut e, &[STEVE, NOTCH], late + 60_000);
         assert!(out.contains(&Out::Tell(
             STEVE,
             "You won #1 (3 emerald) for 400 coins: the items are in your mail (/ah claim).".into()
@@ -1455,20 +1681,17 @@ mod tests {
         assert_eq!(e.pool(POOL), 0);
         assert_eq!(
             e.balance(ALEX),
-            999 + 400 - 20,
-            "paid while offline, less 5% VAT (fee: 1)"
+            1000 + 400,
+            "paid while offline, the whole bid"
         );
-        assert_eq!(
-            e.balance(STEVE) + e.balance(NOTCH) + e.balance(ALEX) + e.pool(TREASURY),
-            3000
-        );
+        assert_eq!(e.balance(STEVE) + e.balance(NOTCH) + e.balance(ALEX), 3000);
         // Alex reads the note when back.
-        let out = ah.tick(&mut e, &[ALEX], VAT, late + 61_000);
+        let out = ah.tick(&mut e, &[ALEX], late + 61_000);
         assert_eq!(
             out,
             [Out::Tell(
                 ALEX,
-                "Auction #1 (3 emerald) sold to Steve for 380 coins (VAT 20 coins).".into()
+                "Auction #1 (3 emerald) sold to Steve for 400 coins.".into()
             )]
         );
         // Steve claims: the items, once.
@@ -1496,7 +1719,7 @@ mod tests {
         run(&mut ah, &mut e, &alex, &mut more, T0, "ah auction 50 1");
         ah.online = [ALEX].into();
         // The auction (1 h) ends with no bid; the fixed one (48 h) later.
-        let out = ah.tick(&mut e, &[ALEX], VAT, T0 + 3_600_000);
+        let out = ah.tick(&mut e, &[ALEX], T0 + 3_600_000);
         assert_eq!(
             out,
             [Out::Tell(
@@ -1504,7 +1727,7 @@ mod tests {
                 "#2 (64 wheat) ended with no bids: the items are in your mail (/ah claim).".into()
             )]
         );
-        ah.tick(&mut e, &[ALEX], VAT, T0 + 48 * 3_600_000);
+        ah.tick(&mut e, &[ALEX], T0 + 48 * 3_600_000);
         assert_eq!(ah.data.listings.len(), 0);
         assert_eq!(ah.mail_of(ALEX).len(), 2);
         // Room for one stack only: one parcel comes, the other waits.
@@ -1606,5 +1829,192 @@ mod tests {
             ah.label(l, T0, &money)
                 .starts_with("#4 32 Oak Log · 16 coins (0.50 each) · Alex · 2d 0h left")
         );
+    }
+
+    #[test]
+    fn an_enchanted_named_sword_comes_back_identical_after_a_purchase_an_expiry_an_auction_and_a_claim()
+     {
+        let (mut e, mut ah, dir) = setup("whole");
+        let (alex, steve, notch) = (p(ALEX, "Alex"), p(STEVE, "Steve"), p(NOTCH, "Notch"));
+        ah.online = [ALEX, STEVE, NOTCH].into();
+        // Listed whole: the stack leaves the hand, the listing keeps it all.
+        let mut a = holding_whole(SWORD);
+        let out = run(&mut ah, &mut e, &alex, &mut a, T0, "ah sell 500");
+        assert!(
+            matches!(&out[0], Out::Reply(s) if s.starts_with("Listed #1: 1 diamond sword")),
+            "{out:?}"
+        );
+        assert_eq!(a.hand_whole, None);
+        assert_eq!(ah.listing(1).unwrap().stack.as_deref(), Some(SWORD));
+        // Bought: Steve gets the very stack.
+        let mut s = empty();
+        ah.buy(&mut e, &steve, &mut s, 1, T0 + 1);
+        assert_eq!(s.wholes, [SWORD]);
+        assert_eq!((e.balance(ALEX), e.balance(STEVE)), (1500, 500));
+        // Steve lists it; nobody buys; a restart; it comes back by mail.
+        let mut s = holding_whole(SWORD);
+        run(&mut ah, &mut e, &steve, &mut s, T0, "ah sell 900");
+        ah.tick(&mut e, &[STEVE], T0 + 48 * 3_600_000);
+        let (mut e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        assert_eq!(ah.mail_of(STEVE)[0].stack.as_deref(), Some(SWORD));
+        let mut s = empty();
+        assert_eq!(
+            ah.claim(STEVE, &mut s, None),
+            [Out::Reply("From your mail: 1 diamond sword.".into())]
+        );
+        assert_eq!(s.wholes, [SWORD]);
+        // Auctioned: Notch wins it, claims it after a restart.
+        let mut s = holding_whole(SWORD);
+        run(&mut ah, &mut e, &steve, &mut s, T0, "ah auction 100 1");
+        ah.bid(&mut e, &notch, 3, None, T0);
+        ah.tick(&mut e, &[STEVE, NOTCH], T0 + 3_600_000);
+        let (_e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        let mut n = empty();
+        ah.claim(NOTCH, &mut n, None);
+        assert_eq!(n.wholes, [SWORD]);
+        assert_eq!(copies(&ah, &[&a, &s, &n], SWORD), 1);
+        // A shulker box keeps its contents (a bundle inside, with its own).
+        let (mut e, mut ah, _dir) = setup("shulker");
+        let mut a = holding_whole(SHULKER);
+        run(&mut ah, &mut e, &alex, &mut a, T0, "ah sell 10");
+        let mut s = empty();
+        ah.buy(&mut e, &steve, &mut s, 1, T0);
+        assert_eq!(s.wholes, [SHULKER]);
+    }
+
+    #[test]
+    fn part_of_a_named_stack_is_listed_and_the_rest_stays_in_the_hand() {
+        let (mut e, mut ah, _dir) = setup("part");
+        let pearls = "minecraft:ender_pearl|16|custom_name=Warp";
+        let mut a = holding_whole(pearls);
+        run(
+            &mut ah,
+            &mut e,
+            &p(ALEX, "Alex"),
+            &mut a,
+            T0,
+            "ah sell 60 6",
+        );
+        assert_eq!(
+            a.hand_whole.as_deref(),
+            Some("minecraft:ender_pearl|10|custom_name=Warp")
+        );
+        let l = ah.listing(1).unwrap();
+        assert_eq!(
+            (l.count, l.stack.as_deref()),
+            (6, Some("minecraft:ender_pearl|6|custom_name=Warp"))
+        );
+        assert_eq!(
+            run(
+                &mut ah,
+                &mut e,
+                &p(ALEX, "Alex"),
+                &mut a,
+                T0,
+                "ah sell 60 11"
+            ),
+            [Out::Error("You hold 10 ender pearl.".into())]
+        );
+    }
+
+    #[test]
+    fn a_failure_or_a_crash_between_steps_never_dupes_or_loses_the_stack() {
+        // The audit log can't be written: the listing isn't made and the
+        // sword is back in the inventory, once.
+        let dir = std::env::temp_dir().join(format!("smp-ah-crash-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("audit.log")).unwrap();
+        let mut e = Economy::open(&dir, EcoConfig::default()).unwrap();
+        let mut ah = AuctionHouse::open(&e, Config::default());
+        let mut a = holding_whole(SWORD);
+        let out = run(&mut ah, &mut e, &p(ALEX, "Alex"), &mut a, T0, "ah sell 500");
+        assert!(matches!(&out[0], Out::Error(_)), "{out:?}");
+        assert!(ah.data.listings.is_empty() && ah.data.mail.is_empty());
+        assert_eq!(
+            (a.hand_whole, &a.wholes[..]),
+            (None, &[SWORD.to_owned()][..])
+        );
+
+        // Each step saved and read back (a restart or a crash after the
+        // save): the sword is in exactly one place each time.
+        let (mut e, mut ah, dir) = setup("crash");
+        let (alex, steve) = (p(ALEX, "Alex"), p(STEVE, "Steve"));
+        let mut a = holding_whole(SWORD);
+        let mut s = empty();
+        run(&mut ah, &mut e, &alex, &mut a, T0, "ah sell 500");
+        let (mut e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        assert_eq!(copies(&ah, &[&a, &s], SWORD), 1, "listed");
+        // A give that fails: nothing bought, nothing moved.
+        let mut broken = Inv {
+            slots_free: 5,
+            fail_give: true,
+            ..Inv::default()
+        };
+        assert!(matches!(
+            &ah.buy(&mut e, &steve, &mut broken, 1, T0)[0],
+            Out::Error(_)
+        ));
+        assert_eq!((ah.listing(1).is_some(), e.balance(STEVE)), (true, 1000));
+        // No room: refused before anything moves.
+        let mut full = Inv::default();
+        assert!(
+            matches!(&ah.buy(&mut e, &steve, &mut full, 1, T0)[0], Out::Error(s) if s.starts_with("Make room"))
+        );
+        ah.buy(&mut e, &steve, &mut s, 1, T0);
+        let (mut e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        assert_eq!(copies(&ah, &[&a, &s], SWORD), 1, "bought");
+        let mut s = holding_whole(SWORD);
+        run(&mut ah, &mut e, &steve, &mut s, T0, "ah sell 500");
+        ah.tick(&mut e, &[STEVE], T0 + 48 * 3_600_000);
+        let (mut e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        assert_eq!(copies(&ah, &[&a, &s], SWORD), 1, "expired to the mail");
+        // A full inventory: the parcel waits, whole.
+        let mut full = Inv::default();
+        ah.claim(STEVE, &mut full, None);
+        let (_e, mut ah) = reopen(&mut ah, &mut e, &dir);
+        assert_eq!(copies(&ah, &[&a, &s, &full], SWORD), 1, "claim refused");
+        ah.claim(STEVE, &mut s, None);
+        assert_eq!(
+            ah.claim(STEVE, &mut s, None),
+            [Out::Reply("Your mail is empty.".into())]
+        );
+        assert_eq!(
+            (copies(&ah, &[&a, &s], SWORD), &s.wholes[..]),
+            (1, &[SWORD.to_owned()][..])
+        );
+    }
+
+    #[test]
+    fn listings_and_mail_from_0_30_load_unchanged_and_give_plain_items() {
+        let (mut e, _ah, dir) = setup("old");
+        let old = serde_json::json!({
+            "next_id": 7,
+            "listings": [{"id": 7, "seller": uuid_string(ALEX), "seller_name": "Alex", "item": "minecraft:wheat",
+                          "count": 64, "price": 100, "auction": false, "created": T0, "ends": T0 + 3_600_000}],
+            "mail": {uuid_string(STEVE): [{"item": "minecraft:diamond", "count": 3, "why": "won"}]},
+            "notes": {}, "sales": [], "today": {"day": 0, "sales": 0, "volume": 0},
+        });
+        e.set_ext("auction", old.clone());
+        e.save().unwrap();
+        let e2 = Economy::open(&dir, EcoConfig::default()).unwrap();
+        let mut ah = AuctionHouse::open(&e2, Config::default());
+        assert_eq!(
+            serde_json::to_value(&ah.data).unwrap(),
+            old,
+            "read and written back the same"
+        );
+        let mut e = e2;
+        e.now = T0;
+        let mut s = empty();
+        assert_eq!(
+            ah.claim(STEVE, &mut s, None),
+            [Out::Reply("From your mail: 3 diamond.".into())]
+        );
+        ah.buy(&mut e, &p(STEVE, "Steve"), &mut s, 7, T0);
+        assert_eq!(
+            (s.items["minecraft:diamond"], s.items["minecraft:wheat"]),
+            (3, 64)
+        );
+        assert!(s.wholes.is_empty());
     }
 }

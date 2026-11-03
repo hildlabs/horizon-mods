@@ -25,8 +25,6 @@ pub struct Config {
     pub cooldown_seconds: i64,
     /// How long an offer waits before its stake goes back.
     pub offer_seconds: i64,
-    /// What the server keeps of the pot, in percent (0: the winner takes all).
-    pub fee_percent: i64,
     /// The lottery: a ticket's price, the tickets one player may hold in a
     /// draw, and the time from a round's first ticket to its draw.
     pub ticket_price: i64,
@@ -42,7 +40,6 @@ impl Default for Config {
             max_bet: 1000,
             cooldown_seconds: 30,
             offer_seconds: 60,
-            fee_percent: 0,
             ticket_price: 10,
             max_tickets: 100,
             lottery_seconds: 3600,
@@ -284,15 +281,14 @@ impl Games {
             return vec![Out::Error(e)];
         }
         let o = self.offers.remove(i);
-        let pot = amount * 2;
-        let prize = pot - pot * self.config.fee_percent.clamp(0, 100) / 100;
+        let prize = amount * 2;
         let (winner, loser, winner_name, loser_name) = if heads() {
             (o.from, me.uuid, o.from_name.as_str(), me.name.as_str())
         } else {
             (me.uuid, o.from, me.name.as_str(), o.from_name.as_str())
         };
         let stakes = [(o.from, amount), (me.uuid, amount)];
-        if let Err(e) = economy.award("coinflip_win", &stakes, winner, prize) {
+        if let Err(e) = economy.award("coinflip_win", &stakes, winner) {
             // Not decided: both stakes go back (or, failing that, at the next start).
             for (u, a) in stakes {
                 let _ = economy.release("coinflip_cancel", u, a);
