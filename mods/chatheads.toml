@@ -1,13 +1,13 @@
 id = "chatheads"
 kind = "native-mod"
-name = "chatheads"
+name = "ChatHeads"
 summary = "A player's head left of every chat line they wrote."
 description = "Each chat line from a player gets their 8x8 skin face in the strip to its left; lines without a player stay as they are, and the face fades with its line. The switch lives in Options > Mods."
 authors = ["Domanffe"]
 owners = ["Domanffe"]
 license = "MIT"
 source = "https://github.com/Domanffe/chatheads"
-icon = "https://horizon-rust.github.io/horizon-mods/icons/chatheads.pnghttps://horizon-rust.github.io/horizon-mods/icons/chatheads.png"
+icon = "https://horizon-rust.github.io/horizon-mods/icons/chatheads.png"
 
 [[versions]]
 version = "0.1.1"
