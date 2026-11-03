@@ -9,9 +9,9 @@
 // each player staked and got back today, the day's biggest wins, each game's
 // totals) and the lobby menu. Winnings are paid from the casino's own pot
 // (the economy's "casino" pool, which every lost bet fills); a win the pot
-// can't cover is paid up to what it holds, never with new money. Once an
-// hour the pot above its float goes to the Treasury: the house edge is the
-// state's income, a money sink for the players. Each game is a file of its
+// can't cover is paid up to what it holds. A new casino's pot gets its
+// float once, made for it; then it keeps the house edge, a money sink for
+// the players. Each game is a file of its
 // own (smp_casino_roulette, ...). No game types: the glue (casino_glue.rs)
 // turns the icons and effects into menus, packets and commands. Added to the
 // game as `game::smp_casino`; also a module of this crate, for its tests.
@@ -20,7 +20,7 @@ use super::smp_casino_blackjack::{self as bj, Blackjack};
 use super::smp_casino_crash::{self as crash, Crash};
 use super::smp_casino_roulette::{self as roulette, Roulette};
 use super::smp_casino_slots::{self as slots, Slots};
-use super::smp_economy::{Economy, Out, Player, TREASURY};
+use super::smp_economy::{Economy, Out, Player};
 use super::smp_store::{read_json, uuid_string, write_json};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -34,7 +34,6 @@ pub const SIZE: usize = 54;
 /// The least time between two pictures of an animated menu: 5 a second.
 pub const FRAME_MS: i64 = 200;
 const DAY_MS: i64 = 86_400_000;
-const HOUR_MS: i64 = 3_600_000;
 /// Wins kept in the day's list.
 const WINS: usize = 10;
 
@@ -53,7 +52,7 @@ pub struct Config {
     pub daily_win_cap: i64,
     /// Between the end of a player's round and their next bet.
     pub cooldown_ms: i64,
-    /// What the pot keeps for paying wins; above it, the Treasury's.
+    /// What a new casino's pot starts with, for paying wins (made once).
     pub float: i64,
     /// A win of at least this profit is told to everyone.
     pub announce_profit: i64,
@@ -398,9 +397,12 @@ pub struct Ledger {
     /// The day's biggest wins (by profit), biggest first.
     pub wins: Vec<Win>,
     pub totals: BTreeMap<String, Totals>,
-    /// When the pot last sent its profit to the Treasury (ms).
-    pub last_sweep: i64,
 }
+
+/// The mark, in `economy.json`'s `ext`, that the pot got its float: kept with
+/// the pot's money so one write saves both, and a lost or unreadable
+/// `casino.json` can't make the float again.
+const FLOATED: &str = "casino_float";
 
 /// A bet placed and held, for a game to decide.
 #[derive(Clone, Debug, PartialEq)]
@@ -710,31 +712,21 @@ impl Casino {
         fx
     }
 
-    /// Once an hour: the pot above its float goes to the Treasury; below
-    /// it, the Treasury tops it up with what it can spare. Never new money.
-    pub fn sweep(&mut self, economy: &mut Economy, now: i64) -> Option<String> {
-        if now - self.ledger.last_sweep < HOUR_MS {
+    /// Once, ever: a new casino's pot gets its float (what it lacks of
+    /// it), made for it. A world whose pot already holds money (from before
+    /// 0.30) gets only what it lacks.
+    pub fn seed(&mut self, economy: &mut Economy) -> Option<String> {
+        if economy.ext(FLOATED) == Some(&serde_json::Value::Bool(true)) {
             return None;
         }
-        self.ledger.last_sweep = now;
-        self.dirty = true;
-        let (pot, float) = (economy.pool(POT), self.config.float.max(0));
-        let result = if pot > float {
-            economy.pool_move(
-                "casino_profit",
-                POT,
-                TREASURY,
-                pot - float,
-                "the casino's pot above its float",
-            )
-        } else {
-            let top_up = (float - pot).min(economy.pool(TREASURY));
-            if top_up <= 0 {
-                return None;
-            }
-            economy.pool_move("casino_float", TREASURY, POT, top_up, "the casino's float")
-        };
-        result.err()
+        economy.set_ext(FLOATED, serde_json::Value::Bool(true));
+        let lacks = self.config.float.max(0) - economy.pool(POT);
+        if lacks <= 0 {
+            return None;
+        }
+        economy
+            .mint_pool("casino_float", POT, lacks, "the casino's float")
+            .err()
     }
 
     /// The day's biggest wins, as lines.
@@ -823,7 +815,7 @@ impl Casino {
             ),
             "Every draw is made by the server (ChaCha20 seeded by the system), before the animation starts.".into(),
             format!(
-                "Wins are paid from the casino's pot ({} now); a win larger than the pot is paid up to it. The house's profit goes to the Treasury.",
+                "Wins are paid from the casino's pot ({} now); a win larger than the pot is paid up to it. The house's profit stays in it.",
                 economy.money(economy.pool(POT))
             ),
         ];
@@ -1499,7 +1491,7 @@ impl Casino {
     }
 
     /// Each tick while something moves (`animating`), and once a second:
-    /// the frames due, the rounds that end, the hourly sweep.
+    /// the frames due, the rounds that end, the pot's float (once).
     pub fn tick(&mut self, economy: &mut Economy, now: i64) -> Vec<Fx> {
         let mut fx = Vec::new();
         for (spin, n) in self.roulette.ended(now) {
@@ -1569,9 +1561,9 @@ impl Casino {
                 });
             }
         }
-        if let Some(e) = self.sweep(economy, now) {
+        if let Some(e) = self.seed(economy) {
             fx.push(Fx::Out(Out::All(format!(
-                "[casino] the pot's sweep failed: {e}"
+                "[casino] the pot's float failed: {e}"
             ))));
         }
         fx
@@ -1662,20 +1654,14 @@ pub(crate) mod tests {
         }
         let (mut c, problem) = Casino::open(&dir, Config::default(), true);
         assert!(problem.is_none());
-        // Draws the same every run; no sweep unless asked.
+        // Draws the same every run; the pot as set up.
         c.rng = Rng::from_seed([7; 32]);
-        c.ledger.last_sweep = i64::MAX / 2;
+        e.set_ext(FLOATED, serde_json::Value::Bool(true));
         (e, c, dir)
     }
 
     pub fn money(e: &Economy) -> i64 {
-        e.balance(A)
-            + e.balance(B)
-            + e.balance(99)
-            + e.held(A)
-            + e.held(B)
-            + e.pool(POT)
-            + e.pool(TREASURY)
+        e.balance(A) + e.balance(B) + e.balance(99) + e.held(A) + e.held(B) + e.pool(POT)
     }
 
     #[test]
@@ -1902,20 +1888,29 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_sweep_sends_the_profit_to_the_treasury_and_never_mints() {
-        let (mut e, mut c, dir) = setup("sweep", 25_000);
-        let before = money(&e);
-        c.ledger.last_sweep = 0;
-        assert_eq!(c.sweep(&mut e, HOUR_MS), None);
-        assert_eq!((e.pool(POT), e.pool(TREASURY)), (20_000, 5_000));
-        // Not again within the hour.
-        e.pool_move("test", POT, TREASURY, 18_000, "test").unwrap();
-        c.sweep(&mut e, HOUR_MS + 1);
-        assert_eq!(e.pool(POT), 2000);
-        // An hour later the Treasury tops the float up with what it holds.
-        c.sweep(&mut e, 2 * HOUR_MS);
-        assert_eq!((e.pool(POT), e.pool(TREASURY)), (20_000, 5_000));
-        assert_eq!(money(&e), before);
+    fn a_new_pot_gets_its_float_once_and_keeps_the_house_edge() {
+        let (mut e, mut c, dir) = setup("seed", 0);
+        e.set_ext(FLOATED, serde_json::Value::Bool(false));
+        assert_eq!(c.seed(&mut e), None);
+        assert_eq!(e.pool(POT), 20_000);
+        assert_eq!(e.flows().minted["casino_float"], 20_000);
+        // Never again, however low the pot runs.
+        e.pool_move("test", POT, "elsewhere", 19_000, "test")
+            .unwrap();
+        assert_eq!(c.seed(&mut e), None);
+        assert_eq!(e.pool(POT), 1000);
+        // Nor after a restart that lost casino.json: the mark is the economy's.
+        e.save().unwrap();
+        let mut e = Economy::open(&dir, EconomyConfig::default()).unwrap();
+        std::fs::remove_file(dir.join("casino.json")).ok();
+        let (mut c, _) = Casino::open(&dir, Config::default(), true);
+        assert_eq!(c.seed(&mut e), None);
+        assert_eq!(e.pool(POT), 1000, "no second float");
+        // An old pot with money gets only what it lacks.
+        let (mut e, mut c, _) = setup("seed-old", 25_000);
+        e.set_ext(FLOATED, serde_json::Value::Bool(false));
+        c.seed(&mut e);
+        assert_eq!(e.pool(POT), 25_000, "above the float: nothing made");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

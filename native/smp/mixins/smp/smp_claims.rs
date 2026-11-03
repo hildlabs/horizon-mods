@@ -25,6 +25,9 @@ pub struct Config {
     pub chunks: Vec<[i64; 2]>,
     /// The entities only the owner and trusted players may hit in a claim.
     pub protected_entities: Vec<String>,
+    /// Blocks around 0 0, in every dimension, where no one may claim (free
+    /// for all); 0 for none. Claims already there are dropped at start.
+    pub free_radius: i64,
 }
 
 impl Default for Config {
@@ -36,6 +39,7 @@ impl Default for Config {
                 .iter()
                 .map(|&e| format!("minecraft:{e}"))
                 .collect(),
+            free_radius: 0,
         }
     }
 }
@@ -183,6 +187,43 @@ impl Claims {
         })
     }
 
+    /// Whether a chunk touches the free zone around 0 0 (any dimension).
+    fn in_free_zone(&self, cx: i32, cz: i32) -> bool {
+        let r = self.config.free_radius;
+        let near = |c: i32| i64::from(c) * 16 <= r && i64::from(c) * 16 + 15 >= -r;
+        r > 0 && near(cx) && near(cz)
+    }
+
+    /// Drops the claims inside the free zone (a radius set after they were
+    /// made): one line each, for the log.
+    pub fn clear_free_zone(&mut self) -> Vec<String> {
+        let inside: Vec<(String, i32, i32, u128)> = self
+            .owners
+            .iter()
+            .flat_map(|(d, c)| {
+                c.iter()
+                    .filter(|((x, z), _)| self.in_free_zone(*x, *z))
+                    .map(|((x, z), u)| (d.clone(), *x, *z, *u))
+            })
+            .collect();
+        let mut lines = Vec::new();
+        for (dimension, cx, cz, owner) in inside {
+            if let Some(c) = self.owners.get_mut(&dimension) {
+                c.remove(&(cx, cz));
+            }
+            self.data.chunks.remove(&key(&dimension, cx, cz));
+            self.changed = true;
+            lines.push(format!(
+                "chunk {cx} {cz} (x {}, z {}) in {dimension} of {} is in the free zone: unclaimed",
+                cx * 16,
+                cz * 16,
+                smp_store::uuid_string(owner)
+            ));
+        }
+        lines.sort();
+        lines
+    }
+
     pub fn save(&mut self) -> Result<(), String> {
         if self.changed {
             smp_store::write_json(&self.path, &self.data)?;
@@ -271,15 +312,6 @@ impl Claims {
         Err(Some(format!("This land is claimed by {}.", name_of(owner))))
     }
 
-    /// How many chunks each owner holds (the weekly land tax), one pass.
-    pub fn counts(&self) -> std::collections::HashMap<u128, usize> {
-        let mut out = std::collections::HashMap::new();
-        for &u in self.owners.values().flat_map(|c| c.values()) {
-            *out.entry(u).or_default() += 1;
-        }
-        out
-    }
-
     /// How many chunks `uuid` holds.
     pub fn held(&self, uuid: u128) -> usize {
         self.owners
@@ -334,6 +366,10 @@ impl Claims {
             ("claim", []) => match self.chunk_owner(here, cx, cz) {
                 Some(u) if u == me.uuid => vec![Out::Error("This chunk is already yours.".into())],
                 Some(u) => vec![Out::Error(format!("This chunk is {}'s.", name_of(u)))],
+                None if self.in_free_zone(cx, cz) => vec![Out::Error(format!(
+                    "No claims within {} blocks of 0 0: that land is free for all.",
+                    self.config.free_radius
+                ))],
                 None => {
                     let (held, limit) = (self.held(me.uuid), self.limit(played));
                     if held >= limit {
@@ -510,6 +546,54 @@ mod tests {
         assert_eq!(c.relation(ow, 3, 3, A), Some(true));
         assert_eq!(c.relation(ow, 3, 3, B), Some(false));
         assert_eq!(c.relation(ow, 20, 3, B), None);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn no_claims_in_the_free_zone_and_old_ones_are_dropped() {
+        let d = dir();
+        let mut c = Claims::open(&d, Config::default()).unwrap();
+        let alex = player(A, 0);
+        for (x, z) in [(8.0, 8.0), (-520.0, 8.0), (600.0, 600.0)] {
+            c.command(&alex, &at(x, z), 1_000_000, &find, &name_of, "claim")
+                .unwrap();
+        }
+        c.save().unwrap();
+        let config = Config {
+            free_radius: 500,
+            ..Config::default()
+        };
+        let mut c = Claims::open(&d, config).unwrap();
+        // Chunk 0 0 and chunk -33 0 (x -528 to -513: outside 500) stay apart.
+        assert_eq!(c.clear_free_zone().len(), 1);
+        let ow = "minecraft:overworld";
+        assert_eq!(c.owner(ow, 8, 8), None);
+        assert_eq!(c.owner(ow, -520, 8), Some(A));
+        assert_eq!(c.owner(ow, 600, 600), Some(A));
+        let out = c
+            .command(
+                &alex,
+                &at(490.0, -490.0),
+                1_000_000,
+                &find,
+                &name_of,
+                "claim",
+            )
+            .unwrap();
+        assert!(matches!(&out[0], Out::Error(e) if e.contains("free for all")));
+        // The zone is the same in every dimension.
+        let nether = Place {
+            dimension: "minecraft:the_nether".into(),
+            ..at(8.0, 8.0)
+        };
+        let out = c
+            .command(&alex, &nether, 1_000_000, &find, &name_of, "claim")
+            .unwrap();
+        assert!(matches!(&out[0], Out::Error(e) if e.contains("free for all")));
+        // Saved without them.
+        c.save().unwrap();
+        let again = Claims::open(&d, Config::default()).unwrap();
+        assert_eq!(again.owner(ow, 8, 8), None);
         let _ = std::fs::remove_dir_all(d);
     }
 

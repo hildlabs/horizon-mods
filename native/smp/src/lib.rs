@@ -3,8 +3,6 @@
 //! `super::smp_store` reaches the same code in both.
 #[path = "../mixins/smp/smp_auction.rs"]
 pub mod smp_auction;
-#[path = "../mixins/smp/smp_bank.rs"]
-pub mod smp_bank;
 #[path = "../mixins/smp/smp_board.rs"]
 pub mod smp_board;
 #[path = "../mixins/smp/smp_casino.rs"]
@@ -21,14 +19,10 @@ pub mod smp_casino_slots;
 pub mod smp_claims;
 #[path = "../mixins/smp/smp_economy.rs"]
 pub mod smp_economy;
-#[path = "../mixins/smp/smp_futures.rs"]
-pub mod smp_futures;
 #[path = "../mixins/smp/smp_games.rs"]
 pub mod smp_games;
 #[path = "../mixins/smp/smp_invsee.rs"]
 pub mod smp_invsee;
-#[path = "../mixins/smp/smp_jobs.rs"]
-pub mod smp_jobs;
 #[path = "../mixins/smp/smp_lottery.rs"]
 pub mod smp_lottery;
 #[path = "../mixins/smp/smp_market.rs"]
@@ -53,7 +47,5 @@ pub mod smp_report;
 pub mod smp_shop;
 #[path = "../mixins/smp/smp_store.rs"]
 pub mod smp_store;
-#[path = "../mixins/smp/smp_tax.rs"]
-pub mod smp_tax;
 #[path = "../mixins/smp/smp_trade.rs"]
 pub mod smp_trade;

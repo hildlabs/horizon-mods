@@ -1,0 +1,38 @@
+id = "hitbox_plus"
+kind = "native-mod"
+name = "Hitbox+"
+summary = "Customizable entity hitboxes with exact weapon & spear in-reach colors, thickness, eye rays, and sprint HUD."
+description = """
+Hitbox+ for Horizon
+
+Hitbox+ is a high-performance native mod ported to Horizon that revamps vanilla F3+B debug hitboxes with full customization and PvP reach indicators.
+
+Key Features:
+Dynamic In-Reach Detection: Hitboxes automatically change to your chosen reach color when your crosshair is within hitting distance.
+Spear Reach: Accurately extends reach to 4.5 blocks (survival) and 6.5 blocks (creative).
+Melee Reach: Standard 3.0 blocks for swords, axes, maces, and fists.
+11 Selectable Reach Colors: Choose between Bright Green, Neon Cyan, Aqua Mint, Gold Yellow, Sunset Orange, Hot Pink, Neon Purple, Electric Blue, Crimson Red, Pure White, or smooth dynamic Rainbow.
+Hitbox Styles & Thickness: Custom styles (White, Cyan, Yellow, Red, Rainbow) and 3 thickness modes (1.5px Thin, 2.5px Default, 4.0px Thick).
+Eye-Ray & Looking Direction: Toggle looking direction lines and forehead level markers.
+Always-On Sprint HUD: Built-in sprint status indicator with customizable screen corner placement (Top-Left, Top-Right, Bottom-Left, Bottom-Right).
+Zero FPS Cost: Pure lock-free atomic architecture.
+Controls:
+Press H to toggle hitboxes on/off.
+Access Options > Mods > Hitbox+ to customize all colors, thickness, and HUD positions."""
+authors = ["taxtii", "itzglecni"]
+owners = ["taxtii"]
+license = "MIT"
+source = "https://github.com/taxtii/hitbox_plus.git"
+
+[[versions]]
+version = "1.3.0"
+published = "2026-11-03"
+game = "26.3"
+file = "hitbox_plus-1.3.0.hnmod"
+sha256 = "8d1b95e7461e38fc40994b35a82c1f753a58e9751ce27af1dc101a4717dba8a4"
+changelog = """
+- Added dynamic spear attack reach support (4.5 blocks in survival, 6.5 blocks in creative with 0.125 hitbox margin).
+- Standard melee weapons (swords, axes, fists) use exact 3.0-block in-reach detection.
+- Added 11 selectable reach color options (Bright Green, Neon Cyan, Aqua Mint, Gold Yellow, Sunset Orange, Hot Pink, Neon Purple, Electric Blue, Crimson Red, Pure White, Rainbow).
+- Removed red hit flashing when attacking entities.
+- Zero-overhead lock-free atomic rendering with configurable line thickness, eye rays, and always-on toggle sprint HUD."""

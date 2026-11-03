@@ -30,33 +30,6 @@ pub struct Config {
     pub homes: Vec<[i64; 2]>,
     /// `/rules`, a line each.
     pub rules: Vec<String>,
-    /// What each kind of teleport costs (coins, to the Treasury), paid when
-    /// it happens: a called-off one costs nothing.
-    pub fees: Fees,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Fees {
-    /// Free: a lost or new player can always get back.
-    pub spawn: i64,
-    pub home: i64,
-    pub warp: i64,
-    pub back: i64,
-    /// Paid by the one who moves.
-    pub tpa: i64,
-}
-
-impl Default for Fees {
-    fn default() -> Self {
-        Self {
-            spawn: 0,
-            home: 5,
-            warp: 10,
-            back: 10,
-            tpa: 10,
-        }
-    }
 }
 
 impl Default for Config {
@@ -71,7 +44,6 @@ impl Default for Config {
                 "No griefing, no stealing, no cheats.".into(),
                 "The currency is earned in game only: never bought or sold for real money.".into(),
             ],
-            fees: Fees::default(),
         }
     }
 }
@@ -121,7 +93,6 @@ enum To {
 pub struct Pending {
     pub uuid: u128,
     to: To,
-    fee: i64,
     from: Place,
     health: f32,
     due: i64,
@@ -143,8 +114,7 @@ pub struct Teleport {
     pub to: Place,
     /// What the player is told once there.
     pub done: String,
-    /// What it costs, and what for (the audit log's reason).
-    pub fee: i64,
+    /// Where to, in words (`where you died`).
     pub what: String,
     /// The cooldown and `/back` before it: `call_off` puts them back.
     undo: (Option<i64>, Option<(Place, bool)>),
@@ -271,22 +241,7 @@ impl Places {
             .unwrap_or(0)
     }
 
-    /// What the command in `line` will cost its player (`/tpaccept`: the
-    /// one who asked pays, when they move).
-    pub fn fee(&self, line: &str) -> i64 {
-        let f = &self.config.fees;
-        let fee = match line.split_whitespace().next() {
-            Some("spawn") => f.spawn,
-            Some("home") => f.home,
-            Some("warp") => f.warp,
-            Some("back") => f.back,
-            Some("tpa") => f.tpa,
-            _ => 0,
-        };
-        fee.max(0)
-    }
-
-    /// A teleport the game couldn't make or the player couldn't pay: no
+    /// A teleport the game couldn't make: no
     /// cooldown, and `/back` goes where it went before.
     pub fn call_off(&mut self, t: &Teleport) {
         match t.undo.0 {
@@ -301,14 +256,6 @@ impl Places {
 
     /// Starts a teleport's warmup, or says why not.
     fn start(&mut self, me: &Body, to: To, now: i64) -> Vec<Out> {
-        let fee = match &to {
-            To::Player(..) => self.config.fees.tpa,
-            To::Place(_, what) if what == "the spawn" => self.config.fees.spawn,
-            To::Place(_, what) if what.starts_with("home") => self.config.fees.home,
-            To::Place(_, what) if what.starts_with("warp") => self.config.fees.warp,
-            To::Place(..) => self.config.fees.back,
-        }
-        .max(0);
         if let Some(&t) = self.last.get(&me.uuid) {
             let wait = t + self.config.cooldown_seconds * 1000 - now;
             if wait > 0 {
@@ -322,19 +269,13 @@ impl Places {
         self.pending.push(Pending {
             uuid: me.uuid,
             to,
-            fee,
             from: me.at.clone(),
             health: me.health,
             due: now + self.config.warmup_seconds.max(0) * 1000,
         });
-        let cost = if fee > 0 {
-            format!(" (fee {fee} coins)")
-        } else {
-            String::new()
-        };
         if self.config.warmup_seconds > 0 {
             vec![Out::Reply(format!(
-                "Teleporting in {} s{cost}: don't move.",
+                "Teleporting in {} s: don't move.",
                 self.config.warmup_seconds
             ))]
         } else {
@@ -634,7 +575,6 @@ impl Places {
                             name: me.name.clone(),
                             to,
                             done: format!("Teleported to {what}."),
-                            fee: p.fee,
                             what,
                             undo,
                         });
@@ -808,7 +748,7 @@ mod tests {
         let out = p.command(&player(B, 0), &both, 1_000, "tpaccept").unwrap();
         assert_eq!(
             out[1],
-            Out::Tell(A, "Teleporting in 3 s (fee 10 coins): don't move.".into())
+            Out::Tell(A, "Teleporting in 3 s: don't move.".into())
         );
         // Steve walked on meanwhile: Alex lands where Steve is then.
         let later = [body(A, 0.0), body(B, 120.0)];
@@ -846,19 +786,14 @@ mod tests {
         dead.health = 0.0;
         p.tick(&[dead], 0);
         let alive = [body(A, 0.0)];
-        assert_eq!(p.fee("back"), 10);
-        assert_eq!(p.fee("spawn"), 0);
-        assert_eq!(p.fee("tpaccept"), 0, "the one who moves pays");
         let out = p.command(&player(A, 0), &alive, 1_000, "back").unwrap();
         assert_eq!(
             out,
-            vec![Out::Reply(
-                "Teleporting in 3 s (fee 10 coins): don't move.".into()
-            )]
+            vec![Out::Reply("Teleporting in 3 s: don't move.".into())]
         );
         let (_, go) = p.tick(&alive, 4_000);
-        assert_eq!((go[0].fee, go[0].what.as_str()), (10, "where you died"));
-        // Couldn't pay: /back still goes where they died, at once.
+        assert_eq!(go[0].what, "where you died");
+        // The game couldn't make it: /back still goes where they died, at once.
         p.call_off(&go[0]);
         p.command(&player(A, 0), &alive, 4_000, "back").unwrap();
         let (_, go) = p.tick(&alive, 7_000);

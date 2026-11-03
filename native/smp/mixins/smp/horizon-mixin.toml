@@ -1,6 +1,6 @@
 [mod]
 id = "smp"
-version = "0.29.0"
+version = "0.31.0"
 priority = 100
 
 # The commit of horizon it was tested on: it needs horizon#6106 (merged at 975c07d): native_inventory,
@@ -63,34 +63,10 @@ name = "smp_report"
 source = "smp_report.rs"
 
 [[module]]
-id = "jobs"
-file = "crates/horizon-client/src/game.rs"
-name = "smp_jobs"
-source = "smp_jobs.rs"
-
-[[module]]
-id = "futures"
-file = "crates/horizon-client/src/game.rs"
-name = "smp_futures"
-source = "smp_futures.rs"
-
-[[module]]
-id = "bank"
-file = "crates/horizon-client/src/game.rs"
-name = "smp_bank"
-source = "smp_bank.rs"
-
-[[module]]
 id = "auction"
 file = "crates/horizon-client/src/game.rs"
 name = "smp_auction"
 source = "smp_auction.rs"
-
-[[module]]
-id = "tax"
-file = "crates/horizon-client/src/game.rs"
-name = "smp_tax"
-source = "smp_tax.rs"
 
 [[module]]
 id = "trade"

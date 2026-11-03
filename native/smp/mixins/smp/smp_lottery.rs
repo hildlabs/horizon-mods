@@ -133,9 +133,8 @@ impl Lottery {
                 ticket < 0
             })
             .expect("the ticket is below the total");
-        let pot = total * price;
-        let prize = pot - pot * config.fee_percent.clamp(0, 100) / 100;
-        match economy.award("lottery_win", &stakes, winner.0, prize) {
+        let prize = total * price;
+        match economy.award("lottery_win", &stakes, winner.0) {
             Ok(()) => vec![Out::All(format!(
                 "Lottery: {} won {} with {} of {total} tickets!",
                 winner.1,

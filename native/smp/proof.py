@@ -3,9 +3,8 @@ Steve, `horizon-ctl --offscreen`) join it. Checked from the clients' own chat an
 
 - the economy opens an account for each player (config.json written with its defaults, then economy.json);
 - /balance, /pay (the payer's answer and the payee's line), refused payments (too much, past what the payee may receive today, to oneself, unknown name);
-- the Treasury: an operator (made one from the server's console) pays a player from it with a reason (/treasury pay),
-  which everyone sees in /treasury and /treasury log; /eco give is refused to everyone (nobody can make money), and a
-  non-operator can't pay from the Treasury; /eco taxes explains the tax code;
+- money from an operator (made one from the server's console): /eco give with a reason everyone reads; a
+  non-operator can't; /treasury, /bank, /jobs, /futures and /eco taxes are gone, and the old Treasury pool is dropped;
 - /baltop;
 - the commands are in each player's command tree (the chat box's suggestions);
 - the market (Steve in survival, items given from the console): /worth, /sell <item>, /sell hand, /buy, with the
@@ -19,10 +18,10 @@ Steve, `horizon-ctl --offscreen`) join it. Checked from the clients' own chat an
 - the lottery: two players' tickets held, one drawn after `lottery_seconds`, the winner announced to everyone and paid
   the pot;
 - after the server stops cleanly and starts again, the balances are the same, and audit.log holds every change;
-- a Treasury payment for an operator, then the /shop menu: a category, one item bought by a click and a stack by
+- an operator's /eco give, then the /shop menu: a category, one item bought by a click and a stack by
   a shift-click, a stack of the player's own sold by clicking it, "Sell all" stopped by the daily limit (the rest
   kept, the limit shown in the menu and in /worth, the day's sales in market.json), the close button;
-- after the restart, prices moving: a purchase and a sale taxed (receipts, the Treasury), an item bought can't be sold
+- after the restart, prices moving: a purchase and a sale with no tax (receipts), an item bought can't be sold
   back while one found can, one price for diamond, moved down by a sale and up by a purchase as they go, /market's item
   page buying, the 24 h chart given as a map and drawn in the player's hand (market-chart.png), web/market.json, and
   market_prices.json written when the world closes;
@@ -602,16 +601,14 @@ def nicks(server, alex, steve, out):
 
 
 def shop(server, alex):
-    """Alex alone, op, in survival: paid from the Treasury (/eco give refused), then the /shop menu: a category, buying one and a stack,
+    """Alex alone, op, in survival: given money (/eco give), then the /shop menu: a category, buying one and a stack,
     selling a stack of hers, "Sell all" up to the daily limit, closing. Returns the coins it added, and the lines."""
     results = {}
     # Only what the step gives her: "Sell all" would sell the rest too.
     server.console("clear Alex")
     time.sleep(1)
-    results["money"] = alex.say("/treasury pay Alex 2010 proof: shop funds")
-    assert any("The Treasury paid 2,010 coins to Alex: proof: shop funds (by Alex)." in l for l in results["money"]), results
-    results["no_printing"] = alex.say("/eco give Alex 10")
-    assert any("Nobody can make money" in l for l in results["no_printing"]), results
+    results["money"] = alex.say("/eco give Alex 2010 proof: shop funds")
+    assert any("Alex gave 2,010 coins to Alex: proof: shop funds." in l for l in results["money"]), results
     assert alex.count("minecraft:iron_ingot") == 0
     alex.say("/shop")
     menu = alex.menu()
@@ -623,17 +620,17 @@ def shop(server, alex):
     alex.click(300 + 2)  # one iron ingot
     assert alex.count("minecraft:iron_ingot") == 1, alex.run("inventory")
     results["bought"] = alex.chat()[-3:]
-    # One price, 15 (2% of it rounds to no tax).
+    # One price, 15.
     assert any("Bought 1 iron ingot at 15 coins each: 15 coins." in l for l in results["bought"]), results
     alex.click(300 + 45)  # back
     alex.click(300 + 14)  # Building
     alex.run("click-slot", 300 + 0, "shift")  # a stack of cobblestone
     time.sleep(1)
     assert alex.count("minecraft:cobblestone") == 64, alex.run("inventory")
-    # Along the price as the stack moves it: 64 at 1 coin come to 64.05, 65 whole coins, + 1 tax.
+    # Along the price as the stack moves it: 64 at 1 coin come to 64.05, 65 whole coins.
     results["stack"] = alex.chat()[-4:]  # an advancement may come after
     assert any("Bought 64 cobblestone at 1.02 coins each: 65 coins." in l for l in results["stack"]), results
-    assert any("Tax 2%: -1 coins. You paid 66 coins." in l for l in results["stack"]), results
+    assert not any("Tax" in l for l in results["stack"]), results
     # Her own stack of iron, clicked: the ingot she just bought stays (no buying to sell back), one she found sells.
     alex.click(alex.slot_of("minecraft:iron_ingot"))
     results["round_trip"] = alex.chat()[-1:]
@@ -654,7 +651,7 @@ def shop(server, alex):
     alex.click(300 + 49)
     results["sell_all"] = alex.chat()[-8:]
     assert any("Sold 9 diamond at 196 coins each: 1,760 coins." in l for l in results["sell_all"]), results
-    assert any("Tax 2%: -35 coins. You get 1,725 coins." in l for l in results["sell_all"]), results
+    assert not any("Tax" in l for l in results["sell_all"]), results
     assert any("21 diamond kept: today's selling limit." in l for l in results["sell_all"]), results
     assert alex.count("minecraft:diamond") == 21, alex.run("inventory")
     limits = alex.menu()[50]
@@ -665,8 +662,7 @@ def shop(server, alex):
     assert not alex.menu()
     results["worth"] = alex.say("/worth diamond")
     assert any("You may sell 631 more diamond today." in l for l in results["worth"]), results
-    # The tax: 1 on the cobblestone, 35 on the diamonds, to the Treasury.
-    return 2000 + 10 - 15 - 65 - 1 + 15 + 1760 - 35, results
+    return 2000 + 10 - 15 - 65 + 15 + 1760, results
 
 
 def invsee(alex, data):
@@ -724,9 +720,8 @@ def market(server, alex, out, data):
     results["bought"] = alex.chat()[-4:]
     # One diamond moves the price 0.5% as it is bought: 191.7, 192 whole coins.
     paid = 192
-    tax = (paid * 200 + 5000) // 10000
     assert any(f"Bought 1 diamond at {paid} coins each: {paid} coins." in l for l in results["bought"]), results
-    assert any(f"Tax 2%: -{tax} coins. You paid {paid + tax} coins." in l for l in results["bought"]), results
+    assert not any("Tax" in l for l in results["bought"]), results
     alex.click(300 + 39)  # the 24 h chart
     assert alex.count("minecraft:filled_map") == 1, alex.run("inventory")
     alex.click(300 + 53)  # close
@@ -750,8 +745,7 @@ def market(server, alex, out, data):
     # One price, which buying and selling both use.
     assert 190 < diamond["price"] < 200 and diamond["buy"] == diamond["sell"] == diamond["price"], results["web"]
     assert diamond["volume_24h"] == 10 and diamond["day"]["price"], results["web"]
-    results["tax"] = tax
-    return paid + tax, results
+    return paid, results
 
 
 def trades(server, alex, steve, port, ctl, resources, root):
@@ -854,23 +848,20 @@ def run(ctl, resources, out):
         data.mkdir(parents=True)
         (data / "config.json").write_text(json.dumps({"gambling": {"enabled": True, "cooldown_seconds": 20,
                                                                          "lottery_seconds": 30},
-                                                      # Free teleports and an instant reward: the sums below
-                                                      # stay as they were (fees and the reward's delay have
-                                                      # unit tests).
-                                                      "places": {"warmup_seconds": 2, "cooldown_seconds": 0,
-                                                                 "fees": {"spawn": 0, "home": 0, "warp": 0,
-                                                                          "back": 0, "tpa": 0}},
+                                                      # Quick teleports and an instant reward (the reward's
+                                                      # delay has unit tests).
+                                                      "places": {"warmup_seconds": 2, "cooldown_seconds": 0},
                                                       # Paid once, after the restart, not to change the sums.
                                                       "presence": {"daily_reward": 0, "reward_after_minutes": 0},
                                                       # Steve plays a few minutes before his nickname.
                                                       "nicks": {"min_playtime_minutes": 1},
-                                                      # Fixed prices, no tax, for the first run's sums; the
+                                                      # Fixed prices for the first run's sums; the
                                                       # moving market is on after the restart.
                                                       "market": {"dynamic": {"enabled": False}},
-                                                      # The casino's pot takes no float from the Treasury here (its
-                                                      # own proof, proof_casino.py, covers it): the sums stay.
+                                                      # The casino's pot gets no float here (its own proof,
+                                                      # proof_casino.py, covers it): the sums stay.
                                                       "casino": {"float": 0}}))
-        # A Treasury with money, the only place operators may pay from (nobody can make money).
+        # A world from before 0.30, with a Treasury: its pool is dropped at the first start.
         (data / "economy.json").write_text(json.dumps({"accounts": {}, "pools": {"treasury": 5000}}))
         # A nickname an older version let through, taken off at the first start.
         (data / "nicks.json").write_text(json.dumps({"nicks": {"00000000-0000-0000-0000-00000000abcd": {
@@ -884,23 +875,22 @@ def run(ctl, resources, out):
         time.sleep(2)
         config = json.loads((data / "config.json").read_text())
         results["config_keys"] = sorted(config)
-        assert results["config_keys"] == ["auction", "bank", "board", "casino", "claims", "currency", "futures", "gambling", "jobs",
-                                          "market", "nicks", "places", "presence", "report", "shop",
-                                          "starting_balance", "taxes", "web"], config
+        assert results["config_keys"] == ["auction", "board", "casino", "claims", "currency", "gambling", "market", "nicks", "places", "presence", "report", "shop",
+                                          "starting_balance", "web"], config
         results["welcome"] = steve.chat()
         assert any("Welcome to the server, Steve!" in l for l in results["welcome"]), results["welcome"]
         assert any("1. Be respectful to everyone." in l for l in results["welcome"]), results["welcome"]
         assert any("Steve joined for the first time" in l for l in alex.chat()), alex.chat()
         assert config["gambling"] == {"enabled": True, "min_bet": 10, "max_bet": 1000, "cooldown_seconds": 20,
-                                      "offer_seconds": 60, "fee_percent": 0, "ticket_price": 10,
+                                      "offer_seconds": 60, "ticket_price": 10,
                                       "max_tickets": 100, "lottery_seconds": 30}, config
         # One price, to buy and to sell.
         assert config["market"]["items"]["minecraft:diamond"] == {"buy": 200, "sell": 200}, config
         server.console("op Alex")
         time.sleep(1)
-        results["grant"] = alex.say("/treasury pay Alex 500 proof funding")
-        assert any("The Treasury paid 500 coins to Alex: proof funding (by Alex). Treasury: 4,500 coins." in l
-                   for l in results["grant"]), results
+        results["grant"] = alex.say("/eco give Alex 500 proof funding")
+        assert any("Alex gave 500 coins to Alex: proof funding." in l for l in results["grant"]), results
+        assert any("Alex gave 500 coins to Alex: proof funding." in l for l in steve.chat()[-3:]), "everyone reads it"
         results["balance"] = alex.say("/balance")
         assert any("Balance: 500 coins" in l for l in results["balance"]), results
         results["pay"] = alex.say("/pay Steve 120")
@@ -916,17 +906,13 @@ def run(ctl, resources, out):
                                                      "You can't pay yourself.",
                                                      "No player named Nobody has an account.")):
             assert any(error in l for l in lines), results["refused"]
-        results["eco_refused"] = steve.say("/eco give Steve 1000")
-        assert not any("now has" in l for l in results["eco_refused"]), results
-        results["treasury_refused"] = steve.say("/treasury pay Steve 1000 because")
-        assert not any("The Treasury paid" in l for l in results["treasury_refused"]), results
-        results["treasury"] = steve.say("/treasury")
-        assert any("Treasury: 4,500 coins" in l for l in results["treasury"]), results
-        assert any("grant 500 coins" in l for l in results["treasury"]), results
-        results["treasury_log"] = steve.say("/treasury log")
-        assert any("-500 coins grant (Alex): proof funding, by Alex" in l for l in results["treasury_log"]), results
-        results["taxes"] = steve.say("/eco taxes")
-        assert any("Land tax, weekly: 5 coins a claimed chunk past your first 4." in l for l in results["taxes"]), results
+        results["eco_refused"] = steve.say("/eco give Steve 1000 because")
+        assert not any("gave" in l for l in results["eco_refused"]), results
+        # The parts taken out: their commands are gone.
+        for line in ("/treasury", "/bank", "/jobs", "/futures", "/eco taxes"):
+            results[line] = steve.say(line)
+            refused = ("Unknown or incomplete command", "Incorrect argument", "Usage", "Only operators")
+            assert any(any(r in l for r in refused) for l in results[line]), results
         results["baltop"] = steve.say("/baltop")
         assert any("1. Alex: 380 coins" in l for l in results["baltop"]), results
         assert any("2. Steve: 120 coins" in l for l in results["baltop"]), results
@@ -984,7 +970,7 @@ def run(ctl, resources, out):
         assert balances["Alex"] == alex_after and sum(balances.values()) + held == 815, economy
         audit = [json.loads(l) for l in (data / "audit.log").read_text().splitlines()]
         results["audit"] = [a["kind"] for a in audit]
-        assert results["audit"] == ["open", "open", "grant", "pay", "sell 60 minecraft:wheat",
+        assert results["audit"] == ["open", "open", "eco_give", "pay", "sell 60 minecraft:wheat",
                                     "sell 1 minecraft:diamond", "buy 5 minecraft:torch", "trade", "trade_failed",
                                     "trade", "trade_money", "pay", "pay", "coinflip_stake", "coinflip_stake", "coinflip_win",
                                     "coinflip_stake", "lottery_ticket", "lottery_ticket", "lottery_win"] + (
@@ -1026,16 +1012,14 @@ def run(ctl, resources, out):
         economy = json.loads((data / "economy.json").read_text())
         total = sum(a["balance"] for a in economy["accounts"].values())
         assert "held" not in economy and total == 815 + 7 + added, economy
-        # Every coin an operator gave came out of the Treasury.
-        # The market's tax went in: 36 in the shop, and on her diamond.
-        assert economy["pools"]["treasury"] == 5000 - 500 - 2010 + 36 + results["market"]["tax"], economy["pools"]
+        # The old Treasury pool is gone; no fee or tax took anything.
+        assert "treasury" not in economy.get("pools", {}), economy.get("pools")
         audit = [json.loads(l) for l in (data / "audit.log").read_text().splitlines()]
         took = [a for a in audit if a["kind"] == "invsee_take"]
         assert [(a["item"], a["count"], a["inventory"]) for a in took] == [("minecraft:torch", 5, "inventory")], took
         kinds = [a["kind"] for a in audit if not a["kind"].startswith("invsee_")]
-        shop_kinds = ["grant", "buy 1 minecraft:iron_ingot", "buy 64 minecraft:cobblestone", "market_tax",
-                      "sell 1 minecraft:iron_ingot", "sell 9 minecraft:diamond", "market_tax",
-                      "buy 1 minecraft:diamond", "market_tax"]
+        shop_kinds = ["eco_give", "buy 1 minecraft:iron_ingot", "buy 64 minecraft:cobblestone",
+                      "sell 1 minecraft:iron_ingot", "sell 9 minecraft:diamond", "buy 1 minecraft:diamond"]
         assert kinds[-len(shop_kinds):] == shop_kinds, kinds[-8:]
         kinds = kinds[:-len(shop_kinds)]
         assert kinds[-2] in ("held_returned", "coinflip_cancel") and kinds[-1] == "daily_reward", kinds[-3:]

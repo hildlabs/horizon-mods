@@ -1,16 +1,16 @@
 // The economy in the open: `/eco stats` (the money supply and where it
-// sits, what the server made and destroyed today, the Treasury's day, how
-// evenly money is spread), a report to everyone at 00:00 UTC on the day
+// sits, what the server made and destroyed today, how evenly money is
+// spread), a report to everyone at 00:00 UTC on the day
 // before, and `web/economy.json` for the site's /hub (written once a minute,
 // off the tick thread, by the glue). One snapshot a day is kept (60 days) in
 // `economy.json` (`ext.report`) for the curves. Reading only: this part
 // moves no money. No game types. Added to the game as `game::smp_report`;
 // also a module of this crate, for its tests.
 
-use super::smp_economy::{DAY_MS, Economy, INSURANCE, Out, TREASURY};
+use super::smp_economy::{DAY_MS, Economy, Out};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// `config.json`'s `report`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -41,16 +41,11 @@ pub struct Day {
     pub day: i64,
     /// All the money there is, at the end of the day.
     pub supply: i64,
-    /// Players' money: wallets, savings, money held (bids, stakes, margins).
+    /// Players' money: wallets, money held (bids, stakes).
     pub players: i64,
-    pub treasury: i64,
-    pub insurance: i64,
     /// Made and destroyed by the server that day.
     pub minted: i64,
     pub burned: i64,
-    /// The Treasury's income and spending that day.
-    pub taxes: i64,
-    pub spent: i64,
     /// Over players with money: Gini (0 to 1, in thousandths) and the
     /// richest ten's share (percent).
     pub gini_milli: i64,
@@ -73,8 +68,8 @@ pub struct Report {
     minute: i64,
 }
 
-/// Pools that are the state's, not players' money.
-const STATE_POOLS: [&str; 3] = [TREASURY, INSURANCE, "casino"];
+/// Pools that aren't players' money: the casino's pot.
+const HOUSE_POOLS: [&str; 1] = ["casino"];
 
 /// Gini (thousandths) and the top ten's share (percent) of `wealth`.
 pub fn spread(mut wealth: Vec<i64>) -> (i64, i64) {
@@ -152,83 +147,53 @@ impl Report {
         }
     }
 
-    /// The day's numbers now. `savings`: what each player has in the bank.
-    pub fn snapshot(economy: &mut Economy, savings: &HashMap<u128, i64>, day: i64) -> Day {
+    /// The day's numbers now.
+    pub fn snapshot(economy: &mut Economy, day: i64) -> Day {
         let accounts = economy.accounts();
         let wallets: i64 = accounts.iter().map(|a| a.2).sum();
         let pools: i64 = economy.pools().values().sum();
-        let state: i64 = STATE_POOLS.iter().map(|p| economy.pool(p)).sum();
+        let house: i64 = HOUSE_POOLS.iter().map(|p| economy.pool(p)).sum();
         let supply = wallets + economy.held_total() + pools;
-        let mut wealth: HashMap<u128, i64> = accounts.iter().map(|a| (a.0, a.2)).collect();
-        for (u, s) in savings {
-            *wealth.entry(*u).or_default() += s;
-        }
-        let (gini_milli, top10_percent) = spread(wealth.into_values().collect());
+        let (gini_milli, top10_percent) = spread(accounts.iter().map(|a| a.2).collect());
         let today = economy.now.div_euclid(DAY_MS);
-        let (minted, burned, taxes, spent) = {
-            let t = economy.treasury();
-            let (inc, out) = if t.day == day {
-                (sum(&t.income_today), sum(&t.spent_today))
-            } else if t.day == day + 1 {
-                (sum(&t.income_yesterday), sum(&t.spent_yesterday))
-            } else {
-                (0, 0)
-            };
-            let f = economy.flows();
-            let (m, b) = if day == today {
-                (sum(&f.minted), sum(&f.burned))
-            } else if day + 1 == today {
-                (sum(&f.minted_yesterday), sum(&f.burned_yesterday))
-            } else {
-                (0, 0)
-            };
-            (m, b, inc, out)
+        let f = economy.flows();
+        let (minted, burned) = if day == today {
+            (sum(&f.minted), sum(&f.burned))
+        } else if day + 1 == today {
+            (sum(&f.minted_yesterday), sum(&f.burned_yesterday))
+        } else {
+            (0, 0)
         };
         Day {
             day,
             supply,
-            players: supply - state,
-            treasury: economy.pool(TREASURY),
-            insurance: economy.pool(INSURANCE),
+            players: supply - house,
             minted,
             burned,
-            taxes,
-            spent,
             gini_milli,
             top10_percent,
         }
     }
 
     /// Runs `/eco stats` (or `/money stats`); None for another command.
-    pub fn command(
-        &self,
-        economy: &mut Economy,
-        savings: &HashMap<u128, i64>,
-        line: &str,
-    ) -> Option<Vec<Out>> {
+    pub fn command(&self, economy: &mut Economy, line: &str) -> Option<Vec<Out>> {
         let words: Vec<&str> = line.split_whitespace().collect();
         if !matches!(words.as_slice(), ["eco" | "money", "stats"]) {
             return None;
         }
         let today = economy.now.div_euclid(DAY_MS);
-        let d = Self::snapshot(economy, savings, today);
+        let d = Self::snapshot(economy, today);
         let since = self.state.days.last().map(|y| d.supply - y.supply);
         let pools: Vec<String> = economy
             .pools()
             .iter()
-            .filter(|(k, v)| **v > 0 && !STATE_POOLS.contains(&k.as_str()))
+            .filter(|(k, v)| **v > 0 && !HOUSE_POOLS.contains(&k.as_str()))
             .map(|(k, v)| format!("{} {}", k.replace('_', " "), economy.money(*v)))
             .collect();
         let flows = economy.flows().clone();
-        let t = economy.treasury().clone();
-        let (inc, out) = if t.day == today {
-            (t.income_today, t.spent_today)
-        } else {
-            Default::default()
-        };
-        let mut lines = vec![
+        Some(vec![
             Out::Reply(format!(
-                "Money supply: {}{}. Players hold {} (of it in pools: {}), the Treasury {}, the insurance fund {}.",
+                "Money supply: {}{}. Players hold {} (of it in pools: {}), the casino's pot {}.",
                 economy.money(d.supply),
                 since.map_or(String::new(), |s| format!(
                     " ({}{} since midnight)",
@@ -241,8 +206,7 @@ impl Report {
                 } else {
                     pools.join(", ")
                 },
-                economy.money(d.treasury),
-                economy.money(d.insurance)
+                economy.money(d.supply - d.players)
             )),
             Out::Reply(format!(
                 "Today the server made {} ({}) and destroyed {} ({}).",
@@ -252,26 +216,15 @@ impl Report {
                 list(economy, &flows.burned, 3)
             )),
             Out::Reply(format!(
-                "Taxes and fees today: {} ({}). The Treasury paid out {}.",
-                economy.money(sum(&inc)),
-                list(economy, &inc, 4),
-                economy.money(sum(&out))
-            )),
-            Out::Reply(format!(
                 "Spread: Gini {}.{:03} (0 equal, 1 one player has all), the richest ten hold {}%.",
                 d.gini_milli / 1000,
                 d.gini_milli % 1000,
                 d.top10_percent
             )),
-        ];
-        lines.push(Out::Reply(
-            "The Treasury: /treasury. The taxes: /eco taxes.".into(),
-        ));
-        Some(lines)
+        ])
     }
 
-    /// Whether `tick` has work at `now` (a new minute or day): the glue
-    /// gathers the savings only then.
+    /// Whether `tick` has work at `now` (a new minute or day).
     pub fn due(&self, now: i64) -> bool {
         now.div_euclid(60_000) != self.minute || now.div_euclid(DAY_MS) > self.state.day
     }
@@ -279,12 +232,7 @@ impl Report {
     /// Once a second from the glue. At the day's turn: the day before is
     /// kept and, if on, told to everyone. Returns the lines, and whether
     /// `web/economy.json` is due (once a minute).
-    pub fn tick(
-        &mut self,
-        economy: &mut Economy,
-        savings: &HashMap<u128, i64>,
-        now: i64,
-    ) -> (Vec<Out>, bool) {
+    pub fn tick(&mut self, economy: &mut Economy, now: i64) -> (Vec<Out>, bool) {
         let minute = now.div_euclid(60_000);
         let web = self.config.web_json && minute != self.minute;
         self.minute = minute;
@@ -296,7 +244,7 @@ impl Report {
         self.state.day = today;
         self.dirty = true;
         // The supply now is yesterday's end, give or take a second.
-        let d = Self::snapshot(economy, savings, yesterday);
+        let d = Self::snapshot(economy, yesterday);
         let before = self
             .state
             .days
@@ -318,7 +266,7 @@ impl Report {
 
     fn daily_line(&self, economy: &Economy, d: &Day, before: Option<i64>) -> String {
         format!(
-            "Economy yesterday: money supply {}{}; the server made {} and destroyed {}; taxes and fees {} to the Treasury (now {}), which paid out {}. /eco stats",
+            "Economy yesterday: money supply {}{}; the server made {} and destroyed {}. /eco stats",
             economy.money(d.supply),
             before.map_or(String::new(), |b| {
                 let c = d.supply - b;
@@ -329,27 +277,15 @@ impl Report {
                 )
             }),
             economy.money(d.minted),
-            economy.money(d.burned),
-            economy.money(d.taxes),
-            economy.money(d.treasury),
-            economy.money(d.spent)
+            economy.money(d.burned)
         )
     }
 
-    /// `web/economy.json`: aggregates, the Treasury's every movement (public
-    /// in game too), the tax code, the days kept.
-    pub fn web(
-        &self,
-        economy: &mut Economy,
-        savings: &HashMap<u128, i64>,
-        taxes: Value,
-        now: i64,
-    ) -> Value {
+    /// `web/economy.json`: aggregates and the days kept.
+    pub fn web(&self, economy: &mut Economy, now: i64) -> Value {
         let today = now.div_euclid(DAY_MS);
-        let d = Self::snapshot(economy, savings, today);
+        let d = Self::snapshot(economy, today);
         let flows = economy.flows().clone();
-        let t = economy.treasury().clone();
-        let fresh = t.day == today;
         let pools: BTreeMap<String, i64> = economy.pools().clone();
         let daily = self.state.days.last().map(|y| {
             self.daily_line(
@@ -372,16 +308,6 @@ impl Report {
             "pools": pools,
             "minted_today": flows.minted,
             "burned_today": flows.burned,
-            "treasury": {
-                "balance": economy.pool(TREASURY),
-                "insurance": economy.pool(INSURANCE),
-                "income": t.income,
-                "spent": t.spent,
-                "income_today": if fresh { t.income_today } else { BTreeMap::new() },
-                "spent_today": if fresh { t.spent_today } else { BTreeMap::new() },
-                "log": t.log,
-            },
-            "taxes": taxes,
             "days": self.state.days,
             "daily_report": daily,
         })
@@ -419,15 +345,13 @@ mod tests {
     }
 
     #[test]
-    fn stats_show_what_was_made_destroyed_and_taxed_today() {
+    fn stats_show_what_was_made_and_destroyed_today() {
         let (mut e, r) = setup("stats");
         e.adjust("sell 20 minecraft:wheat", A, 600, "").unwrap();
         e.adjust("daily_reward", B, 50, "").unwrap();
         e.adjust("buy 5 minecraft:torch", A, -100, "").unwrap();
-        e.to_pool("vat", A, TREASURY, 25, "").unwrap();
-        let out = r
-            .command(&mut e, &HashMap::from([(B, 0)]), "eco stats")
-            .unwrap();
+        e.to_pool("ah_bid", A, "auction", 25, "").unwrap();
+        let out = r.command(&mut e, "eco stats").unwrap();
         let text: Vec<String> = out
             .iter()
             .map(|o| match o {
@@ -435,52 +359,40 @@ mod tests {
                 o => panic!("{o:?}"),
             })
             .collect();
-        assert!(
-            text[0].starts_with("Money supply: 550 coins. Players hold 525 coins"),
-            "{}",
-            text[0]
+        assert_eq!(
+            text[0],
+            "Money supply: 550 coins. Players hold 550 coins (of it in pools: auction 25 coins), the casino's pot 0 coins."
         );
         assert_eq!(
             text[1],
             "Today the server made 650 coins (market sales 600 coins, daily reward 50 coins) and destroyed 100 coins (market purchases 100 coins)."
         );
-        assert!(
-            text[2].starts_with("Taxes and fees today: 25 coins (vat 25 coins)"),
-            "{}",
-            text[2]
-        );
-        assert!(r.command(&mut e, &HashMap::new(), "eco give A 5").is_none());
+        assert!(!text.iter().any(|l| l.contains("Treasury")), "{text:?}");
+        assert!(r.command(&mut e, "eco give A 5").is_none());
     }
 
     #[test]
     fn midnight_reports_the_day_before_once_and_keeps_it_through_a_restart() {
         let (mut e, mut r) = setup("daily");
         e.adjust("sell 1 minecraft:diamond", A, 100, "").unwrap();
-        e.to_pool("vat", A, TREASURY, 5, "").unwrap();
-        let (out, web) = r.tick(&mut e, &HashMap::new(), T0 + 2000);
+        let (out, web) = r.tick(&mut e, T0 + 2000);
         assert!(out.is_empty() && web, "same day; the JSON's first minute");
-        assert!(
-            !r.tick(&mut e, &HashMap::new(), T0 + 3000).1,
-            "once a minute"
-        );
+        assert!(!r.tick(&mut e, T0 + 3000).1, "once a minute");
         e.now = T0 + DAY_MS + 500;
         let now = e.now;
-        let (out, _) = r.tick(&mut e, &HashMap::new(), now);
+        let (out, _) = r.tick(&mut e, now);
         assert_eq!(
             out,
             [Out::All(
-                "Economy yesterday: money supply 100 coins; the server made 100 coins and destroyed 0 coins; taxes and fees 5 coins to the Treasury (now 5 coins), which paid out 0 coins. /eco stats"
+                "Economy yesterday: money supply 100 coins; the server made 100 coins and destroyed 0 coins. /eco stats"
                     .into()
             )]
         );
-        assert!(
-            r.tick(&mut e, &HashMap::new(), now + 1000).0.is_empty(),
-            "once"
-        );
-        let json = r.web(&mut e, &HashMap::new(), json!({}), now);
+        assert!(r.tick(&mut e, now + 1000).0.is_empty(), "once");
+        let json = r.web(&mut e, now);
         assert_eq!(json["schema"], 1);
         assert_eq!(json["days"][0]["minted"], 100);
-        assert_eq!(json["treasury"]["balance"], 5);
+        assert!(json.get("treasury").is_none());
         assert!(
             json["daily_report"]
                 .as_str()

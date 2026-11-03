@@ -1,0 +1,22 @@
+id = "motion_blur"
+kind = "native-mod"
+name = "Motion Blur"
+summary = "Blurs what moves: mobs, players, items and vehicles along their own motion, with optional camera blur."
+description = """
+Moving mobs, players, items, minecarts and boats blur along their own motion. The camera's motion (turning, walking) can blur too, and is off by default.
+
+Each frame the mod works out every pixel's motion since the last frame (the world's from the depth buffer and the camera, entities from last frame's vertices), finds the largest motion near each tile, and gathers along it with depth-aware weights (McGuire et al., "A Reconstruction Filter for Plausible Motion Blur", 2012).
+
+Settings are in Options → Mods → Motion Blur: strength for moving things and the camera, shutter angle or a fixed exposure, the longest blur, quality, blurring yourself in third person, and a view that shows each pixel's motion."""
+authors = ["levzzz5154"]
+owners = ["levzzz5154"]
+license = "MIT"
+source = "https://github.com/levzzz5154/horizon-motion-blur"
+
+[[versions]]
+version = "0.1.0"
+published = "2026-11-02"
+game = "26.3"
+file = "motion_blur-0.1.0.hnmod"
+sha256 = "4cdaa6369fffea8116b013edfc618358ca989f48ed65c83306d2102f0e506c47"
+changelog = "First release, built against Nightly 2026-11-01: motion blur for moving mobs, players, items and vehicles, with optional camera blur."
