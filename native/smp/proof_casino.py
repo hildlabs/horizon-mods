@@ -5,7 +5,7 @@ Run it with `SMP_PROOF=casino python3 native/tools/native.py proof --resources P
 
 Checked from the clients' own menus, chat, titles and action bar, and from the files the server wrote:
 
-- the pot is funded from the Treasury at the first start (no coin made), and `/casino help` shows every game's odds;
+- the pot gets its float at the first start (made once), and `/casino help` shows every game's odds;
 - `/casino` opens the lobby (its title, the four games, the pot); a click opens a game;
 - roulette: a bet on Red, the stake raised, the wheel turns (several different pictures while it spins), the round
   is paid and the table shows the result; a second spin with the menu closed mid-spin is still paid, once;
@@ -15,7 +15,7 @@ Checked from the clients' own menus, chat, titles and action bar, and from the f
 - blackjack: a hand dealt and stood (or settled at once on a blackjack);
 - the bet limits: the most is `max_bet`;
 - after the server stops: every bet held is settled exactly once in audit.log, nothing is left held, and the money
-  in the game (balances + pools) is what the Treasury held at the start; casino.json holds the day's totals; no
+  in the game (balances + pools) is the float and the operator's two `/eco give`s; casino.json holds the day's totals; no
   console command the casino ran was refused.
 """
 import importlib.util
@@ -31,7 +31,8 @@ _spec = importlib.util.spec_from_file_location("smp_proof_harness", Path(__file_
 harness = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(harness)
 
-TREASURY = 50_000
+FLOAT = 20_000
+GIVEN = 2 * 3000
 NAME = re.compile(r'"?text"?\s*:\s*"((?:[^"\\]|\\.)*)"')
 GAMES = ("casino_roulette", "casino_slots", "casino_crash", "casino_blackjack")
 
@@ -225,8 +226,7 @@ def run(ctl, resources, out):
         data.mkdir(parents=True)
         (data / "config.json").write_text(json.dumps({
             "gambling": {"enabled": True}, "starting_balance": 0, "presence": {"daily_reward": 0},
-            "casino": {"cooldown_ms": 500, "float": 20_000}}))
-        (data / "economy.json").write_text(json.dumps({"accounts": {}, "pools": {"treasury": TREASURY}}))
+            "casino": {"cooldown_ms": 500, "float": FLOAT}}))
         server.start()
         for line in ("difficulty peaceful", "gamerule spawn_monsters false"):
             server.console(line)
@@ -235,7 +235,7 @@ def run(ctl, resources, out):
         server.console("op Alex")
         time.sleep(2)
         for who in ("Alex", "Steve"):
-            assert any("The Treasury paid" in l for l in alex.say(f"/treasury pay {who} 3000 casino proof"))
+            assert any(f"Alex gave 3,000 coins to {who}: casino proof." in l for l in alex.say(f"/eco give {who} 3000 casino proof"))
         results["help"] = alex.say("/casino help")
         text = "\n".join(results["help"])
         for want in ("bets 10 coins to 1,000 coins", "pot (20,000 coins now)", "European", "94.2%", "96%", "3 to 2"):
@@ -273,7 +273,7 @@ def run(ctl, resources, out):
         results["economy"] = economy
         held = sum(economy.get("held", {}).values())
         money = sum(a["balance"] for a in economy["accounts"].values()) + held + sum(economy["pools"].values())
-        assert held == 0 and money == TREASURY, economy
+        assert held == 0 and money == FLOAT + GIVEN, economy
         ledger = json.loads((data / "casino.json").read_text())
         results["casino.json"] = ledger
         assert sum(t["rounds"] for t in ledger["totals"].values()) == 7, ledger

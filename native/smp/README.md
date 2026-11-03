@@ -8,7 +8,7 @@ Players install nothing: it speaks only what a stock Horizon client already show
 lines, vanilla chest menus the server fills with ordinary items (the trade menu); later sounds, titles, the action
 bar, boss bars and the sidebar).
 
-This version: the economy with its Treasury and taxes, the auction house, the bank, the server market and its `/shop` menu, player trades, the coinflip, the lottery, places (spawn, homes, warps,
+This version: the economy, the auction house, the server market and its `/shop` menu, player trades, the coinflip, the lottery, places (spawn, homes, warps,
 teleport requests, the rules), land claims, and the scoreboard (a sidebar with your balance, playtime and the richest players, the Tab list's
 header and footer).
 
@@ -17,19 +17,14 @@ header and footer).
 | `/balance [player]`, `/bal` | your balance, or another player's |
 | `/pay <player> <amount>` | gives money to a player who has an account (anyone who has played since the mod was on) |
 | `/baltop [page]` | the richest players, 10 a page |
-| `/eco take <player> <amount> [reason]`, `/money take ...` | operators of level 3: a cheat's gains go into the Treasury, logged with the reason. Nobody gives or sets money (`/eco give` and `/eco set` say so) |
-| `/treasury`, `/treasury log` | the Treasury's balance, its income by tax and its spending (today and since it opened), its last movements |
-| `/treasury pay <player> <amount> <reason>` | operators of level 3: pays a player from the Treasury (an event prize, a bug refund, a grant), never more than it holds; everyone sees it |
-| `/jobs`, `/jobs deliver <n>` | the day's contracts: deliver items the state asks for, paid from the Treasury |
-| `/futures`, `/futures long\|short <item> <margin> [leverage]`, `/futures close <n>`, `/futures info <item>`, `/futures list` | perpetual futures on the market's prices: a chest menu of your positions (profit green, loss red, liquidation price), leverage up to 10x |
-| `/eco stats` | the money supply and where it sits, what the server made and destroyed today, taxes and fees, how evenly money is spread |
-| `/bank`, `/bank deposit <amount\|all>`, `/bank withdraw <amount\|all>` | your savings, which earn a small interest from the Treasury each night |
+| `/eco give <player> <amount> <reason>`, `/money give ...` | operators of level 3: makes money for a player (an event prize, a bug refund); everyone reads it with the reason, and the audit log keeps it |
+| `/eco take <player> <amount> [reason]`, `/money take ...` | operators of level 3: takes a cheat's gains out of the game, logged with the reason |
+| `/eco stats` | the money supply and where it sits, what the server made and destroyed today, how evenly money is spread |
 | `/ah` | the auction house: a chest menu of listings by category, cheapest a unit first; click one to buy it or bid; your listings (click to take one back) and your mail |
-| `/ah sell <price> [count]` | lists the stack in your hand (or part of it) at a fixed price, for `listing_hours` (48); the listing fee (1%, at least 1 coin) goes to the Treasury |
+| `/ah sell <price> [count]` | lists the stack in your hand (or part of it), whole (enchantments, name, contents...), at a fixed price, for `listing_hours` (48); listing is free |
 | `/ah auction <start> [hours]` | auctions the stack in your hand from a starting bid, for 1 to 24 hours (12) |
 | `/ah bid <listing> <amount>`, `/ah buy <listing>` | bids (the money is held until someone bids more or it ends), buys a fixed-price listing |
 | `/ah cancel <listing>`, `/ah claim`, `/ah search <words>`, `/ah mine`, `/ah mail` | takes back a listing nobody bid on; gives you your mail; the menu on a search, your listings, your mail |
-| `/eco taxes`, `/taxes` | the tax code and your own bill on Monday; `/eco taxes pay` pays land tax you owe |
 | `/shop` | the market as a chest menu: categories, a click buys one, a shift-click 64, a click on a stack of yours sells it, "Sell all" |
 | `/market [item]` | the moving market as a chest menu: categories, each item's price, its move over 1 h and 24 h and its volume; an item's page buys or sells 1, 16 or 64, sells all you carry, and gives its price chart as a map |
 | `/worth [item]` | an item's price, the same to buy and to sell (the one in your hand without a name), and what you may still sell today |
@@ -71,7 +66,7 @@ money and the room before anything moves.
 - One price per item, to buy and to sell (since 0.29): a config that still has two (`buy` 400, `sell` 100) gets
   their geometric mean (200) at load, logged ("one price now"); `buy` or `sell` 0 still closes that side. A trade
   of N items is priced along the curve it moves the price on (below), so buying N and selling them back gives back
-  exactly what was paid, less the tax: a round trip never earns (tested for 1, 64 and past the minute's band, and
+  exactly what was paid (less whole-coin rounding): a round trip never earns (tested for 1, 64 and past the minute's band, and
   over thousands of random trades with the drift in between).
 - No chain of recipes turns what the market sells into something it buys for more: the cheapest way to get each item
   from the market (bought, or crafted, smelted, cut from bought items, through any number of recipes) is worked out,
@@ -87,8 +82,7 @@ money and the room before anything moves.
   and paying it all to a main is refused once the main's limit is reached ("can only receive N more today").
   Trades (`/trade`) and auction house sales are not counted.
 - Amounts are checked: no price above 1,000,000,000,000, no sum that overflows.
-- The coinflip and the lottery give the winner the stakes (less `fee_percent`, 0 by default): they move money
-  between players and never make any.
+- The coinflip and the lottery give the winner all the stakes: they move money between players and never make any.
 
 Default prices (coins; "buy only": the market sells it but doesn't buy it, "sell only" the other way):
 
@@ -151,22 +145,20 @@ when selling: one diamond at 200 costs 201 and sells for 199, 64 cobblestone at 
 exact path of the purchase. All trades together move an item at most `max_minute_move_percent` (5%) a minute from
 where it started that minute: past that, a purchase is cut short and a sale keeps the rest ("sell them in a
 minute"). The factor goes back to 1 with a half-life of `half_life_hours` (6) and stays within `min_factor` (0.6)
-and `max_factor` (1.6), where the rest of a trade goes at that price. A `tax_percent` (2%) of each sale and purchase
-goes to the Treasury, on its own line of the receipt ("Sold 3 diamond at 198 coins each: 595 coins." then "Tax 2%:
--12 coins. You get 583 coins."). Items a player bought from the market in the last `round_trip_hours` (24) can't be
+and `max_factor` (1.6), where the rest of a trade goes at that price. There is no tax on trades (an older config's
+`tax_percent` is ignored): the receipt is the price ("Sold 3 diamond at 198 coins each: 595 coins."). Items a player bought from the market in the last `round_trip_hours` (24) can't be
 sold back to it. (`max_trade_impact_percent` and `max_player_impact_percent` are no longer used: the curve and the
 minute's band do their work.) History: one point a minute for 24 hours and one an hour for 30 days (the mid price, the
 items traded and those sold), in `market_prices.json`, written by a thread every 5 minutes and when the world closes.
 At the first minute of each UTC day, the day's three biggest risers and fallers (at least 1%) and news from real
 activity ("Diamond supply up 40% today", sales against the day before's, at least `news_percent` and
 `news_min_volume`) go to everyone's chat and to `web/market.json` for Kira to post. `enabled: false` keeps the
-fixed prices of 0.23. For other mods (the futures): `Market::spot`, `twap(id, minutes, now)`, `mark_price(id, now)`
-(the 10-minute TWAP from at least 5 points), `volume(id, now, hours)`, `history(id, Span)`.
+fixed prices of 0.23. For other mods: `Market::spot`, `volume(id, now, hours)`, `history(id, Span)`.
 
 **`/market`.** A 6-row chest menu: the shop's categories and the day's movers; a category's items, each with its
 price, its change over 1 h and 24 h (green ▲, red ▼) and what was traded in 24 h; an item's page with its
-base price, the tax and what you may still sell today, buttons to buy or sell 1, 16 and 64 (what they come to
-along the curve, and the tax), sell all of it you carry, and the price chart over 24 hours or 7 days, given as a filled map (128 × 128,
+base price and what you may still sell today, buttons to buy or sell 1, 16 and 64 (what they come to
+along the curve), sell all of it you carry, and the price chart over 24 hours or 7 days, given as a filled map (128 × 128,
 drawn by the server: the curve green when it rose, red when it fell, the price, the change, the low and high). A
 chart map is drawn again each minute for whoever carries it, and once a minute the open menus follow the prices.
 `/market <item>` opens the item's page. `/worth` adds the item's moves and volume.
@@ -189,14 +181,14 @@ the trade, and swaps everything in one step, or nothing (and both must confirm a
 adventure players only.
 
 **Coinflips.** Off by default: the owner turns them on in `config.json` (`gambling`: `enabled`, `min_bet` 10,
-`max_bet` 1000, `cooldown_seconds` 30, `offer_seconds` 60, `fee_percent` 0). A stake is held from the offer, in
+`max_bet` 1000, `cooldown_seconds` 30, `offer_seconds` 60). A stake is held from the offer, in
 `economy.json` with the balances, until the coin falls; an offer cancelled, not taken in time, or whose player
 left gives it back, and so does the next start for one the server stopped with. The coin is a fresh random key from
 the system, never the world's random. Only the in-game currency is staked and won.
 
 **The lottery.** Part of `gambling` (`ticket_price` 10, `max_tickets` 100 a player a draw, `lottery_seconds` 3600
 from a round's first ticket to its draw). Tickets are held like coinflip stakes; at the draw one ticket is picked at
-random among all sold (more tickets, more chances), its owner gets the pot (less `fee_percent`), and everyone hears
+random among all sold (more tickets, more chances), its owner gets the whole pot, and everyone hears
 it. A round with a single player, or one the server stopped with, gives every ticket back.
 
 **The casino.** On with `gambling.enabled` (and `casino.enabled`, true by default). Every game is a chest menu any
@@ -220,26 +212,25 @@ Every draw is made by the server (ChaCha20 keyed from the system) before the ani
 `cooldown_ms` (2000) passes between the end of a round and their next bet. A bet is held like a coinflip stake;
 closing the menu or leaving never loses a round: a spin or a pull ends and is paid, a blackjack hand stands, a crash
 bet is cashed out when its player leaves in flight (or given back before take-off). Wins are paid from the casino's
-pot (`economy.json`'s pool `casino`), never with new money: a win larger than the pot is paid up to it. Once an hour
-the pot above `float` (20,000) goes to the Treasury (`casino_profit`); below it, the Treasury tops it up with what it
-holds (`casino_float`). A win of `jackpot_multiple` (50) times the stake, or of `announce_profit` (5000) coins, is
+pot (`economy.json`'s pool `casino`): a win larger than the pot is paid up to it. A new casino's pot gets `float`
+(20,000) once, made for it (`casino_float`; an older pot only what it lacks of it), then keeps every lost bet: the
+house edge stays in the pot, out of the players' hands. A win of `jackpot_multiple` (50) times the stake, or of `announce_profit` (5000) coins, is
 told to everyone. Settings in `config.json`'s `casino`, also `crash_edge_percent` (4) and `crash_max` (100).
 
 **Places.** A teleport waits `warmup_seconds` (3) in `config.json`'s `places`; a player who moves or is hurt meanwhile
-stays where they are, and `cooldown_seconds` (10) passes between two of one player's teleports. `/tpa` takes the
+stays where they are, and `cooldown_seconds` (10) passes between two of one player's teleports. Teleports are free (an older config's
+`places.fees` is ignored). `/tpa` takes the
 asker to where the other player is when the warmup ends. Homes grow with the time played on the server since the mod
 was on (`homes`: `[hours, homes]`, by default 1 home, 2 from 5 hours, 3 from 20, 5 from 100). `rules` holds `/rules`'
 lines. Teleports are vanilla's `tp`, run as the server (`execute in <level> run tp`), so they cross levels and land
-as any teleport does. Teleports cost a fee to the Treasury (`places.fees`: `spawn` 0, `home` 5, `warp` 10, `back` 10,
-`tpa` 10, paid by the one who moves), logged as `travel_fee`. It is checked when the command runs and paid when the
-teleport happens: one called off (moved, hurt, the money spent meanwhile) costs nothing and leaves `/back` and the
-cooldown as they were. The spawn stays free so a lost or new player can always get back.
+as any teleport does.
 
 **Claims.** In a claimed chunk, only its owner, the players they trust and operators of level 3 break blocks or right
 click blocks: doors, chests, levers, buttons, placing a block, a bucket or flint on a block. Anyone else's click does
 nothing, and the action bar says whose land it is. The chunks a player may hold grow with the time played here
 (`claims.chunks`: `[hours, chunks]`, by default 4, 16 from 5 hours, 36 from 20, 64 from 100); `claims.enabled`
-turns them off. The world stays out too: no water or lava flows, no fire spreads or burns, and no piston pushes into
+turns them off. `claims.free_radius` (0, none) keeps the land within that many blocks of 0 0, in every dimension, free
+for all: no one claims a chunk that touches it, and claims already there are dropped at start (each logged). The world stays out too: no water or lava flows, no fire spreads or burns, and no piston pushes into
 a claim from land that isn't its owner's (or a player's they trust), and explosions break no claimed block, whoever
 lit them. Buckets are guarded where they fill or empty, and hitting the claim's item frames, armour stands,
 paintings, boats, minecarts and animals does nothing for others (`claims.protected_entities`, entity ids; monsters
@@ -273,82 +264,40 @@ limited. All of it is looked at once a second.
 leave the seller's inventory at once; what doesn't sell, what an auction's winner gets, and what didn't fit in a
 buyer's inventory wait in the player's mail (`/ah claim`, or the menu's mail page; as much as fits, the rest stays).
 A purchase takes the whole listing: the listing leaves first, the items move, then the money (the seller gets the
-price less VAT, which goes to the Treasury); of two players who buy at once (the game runs every click on one
+whole price); of two players who buy at once (the game runs every click on one
 thread), the second finds it gone. Bids wait in the `auction` pool: a higher bid gives the last one back at once,
 raising one's own only holds the difference, and a bid in the last `snipe_seconds` (60) moves the end back to
-60 seconds away. When an auction ends, the seller is paid (less VAT) and the items go to the winner's mail. Sellers
+60 seconds away. When an auction ends, the seller is paid the winning bid and the items go to the winner's mail. Sellers
 and outbid players who are offline find a note when they come back. Everything (listings, bids, mail, notes) is
 written in `economy.json` with the balances, in one step: a crash can't keep the money and lose the items, or the
-reverse. Only plain items for now (not worn, named or enchanted); whole stacks with their enchantments wait for
-Horizon's `native_give_stack` to be stamped. Survival and adventure players only. `config.json`'s `auction`:
-`enabled`, `listing_fee_percent` (1), `max_listings` (8 a player), `listing_hours` (48), `auction_hours` (12),
+reverse. A listing carries the whole stack (since 0.31): its enchantments, name, damage, lore, a shulker box's
+or a bundle's contents and every other component, written as the game writes it in player files, and given back
+exactly so (Horizon's `native_give_stack`) to the buyer, the winner, or the seller when it comes back. `/ah sell
+<price> <count>` lists part of the stack in hand; the rest stays in the hand, the same. The menu shows the stack
+itself (its tooltip), with the listing's price, seller and time under it. A stack is taken only if it would come
+back the same (its data written and read back equal); not market charts (free at `/market`), nor a stack holding
+more than 32 KiB of data (a box of books). Listings and mail from before 0.31 hold plain items and are given back as
+before. Survival and adventure players only. `config.json`'s `auction`:
+`enabled`, `max_listings` (8 a player), `listing_hours` (48), `auction_hours` (12),
 `auction_hours_max` (24), `bid_step_percent` (5: the smallest raise), `snipe_seconds` (60). Ended listings are
 looked at once a second (a pass over the open listings).
 
-**The Treasury and taxes.** Nobody can make money, operators included: money enters the game only through the daily
-reward and what the market buys from players (later, paid contracts, from the Treasury). Every tax, fee and house edge
-goes into the Treasury, a pool in `economy.json` that belongs to no player (not in `/baltop` or the sidebar), and
-operators pay only from it (`/treasury pay`, with a reason everyone sees, logged as `grant`). A refund for a bug is
-such a payment, never new money. `/treasury` shows its balance, its income by kind and its spending; `/treasury log`
-its last 50 movements. The tax code (`config.json`'s `taxes`):
-- VAT (`vat_percent`, 5): on sales between players (the auction house, next), paid by the seller from the price.
-- Land tax, every Monday 00:00 UTC: `land_tax_per_chunk` (5 coins) a week per claimed chunk past the first
-  `land_free_chunks` (4). What a player can't pay is owed: no new claim until it's paid (`/eco taxes pay`, or the
-  next Monday's collection). Nothing is ever unclaimed for it.
-- Wealth tax, every Monday: `wealth_brackets` `[from, percent]`, by default 1% of a balance's part above 50,000,
-  2% above 250,000 and 3% above 1,000,000 a week, on the balance and bank savings together (paid from the
-  balance). On 2026-11-01 the richest player held 11,804 coins: nobody pays it
-  yet; it keeps fortunes from growing without bound as the economy does.
-- Games of chance: the coinflip's and the lottery's `fee_percent` goes to the Treasury.
-The week's collection is looked at once a second (one comparison) and runs once a week; a restart never collects
-twice (the week collected is kept with the balances). `enabled: false` turns the weekly taxes off.
+**Money in and out.** Money enters the game through what the market buys from players, the daily reward, the
+casino's float (once) and operators' `/eco give` (with a reason everyone reads, logged as `eco_give`). It leaves
+through what the market sells and operators' `/eco take`. There are no fees, taxes, bank, contracts or futures: no
+VAT, land or wealth tax, no tax on market trades, no teleport, auction or coinflip fee. A world from before 0.30 is
+cleaned up at its first start: bank savings and the margins of open futures positions go back to their owners
+(`bank_closed`, `futures_closed`), and the Treasury, its insurance fund, contracts and land tax owed are dropped.
+`config.json`'s old `taxes`, `bank`, `jobs` and `futures` sections and the `fee_percent` and `listing_fee_percent`
+keys are ignored.
 
-**The bank.** `/bank` shows your savings; `/bank deposit <amount|all>` and `/bank withdraw <amount|all>` move coins
-between your wallet and the bank (the `bank` pool), free and at any time. Interest (`bank.daily_basis_points`, 10:
-0.1% a day) is paid at 00:00 UTC from the Treasury, on the lowest amount saved since the last payment (a deposit made
-just before midnight earns nothing that night), on at most `max_interest_on` (10,000) coins of an account; a player
-saves at most `max_deposit` (25,000). One night's interest for everyone is at most `max_treasury_percent` (5) of the
-Treasury, shared out pro rata when that's short: the bank never makes money, it hands back part of the taxes to
-those who keep coins out of circulation. Interest stays saved (logged as `bank_interest`); deposits and withdrawals
-are `bank_deposit` and `bank_withdraw`. No loans: their collateral (items) can't be held safely here, and a loan
-without it is free money for an alt that never pays back. Savings are kept in `economy.json` (`ext.bank`).
-
-**Contracts.** Each day at 00:00 UTC the state posts `jobs.contracts_per_day` (4) contracts drawn from `jobs.items`
-(farm, mine and mob produce the market buys): "deliver 64 wheat for 128 coins", announced to everyone. `/jobs` lists
-them; `/jobs deliver <n>` takes `batch` (64) plain items from the inventory (they leave the game) and pays at once from
-the Treasury, logged as `contract <count> <item>`. A delivery pays the market's sell price plus `premium_percent`
-(30), and never more than `ask_percent` (90) of what the market asks for the item, checked again at delivery as
-prices move: buying from the market to deliver never pays. Each contract takes `deliveries` (8) for the whole
-server, a player makes at most `max_per_player` (2) a day, survival or adventure only, and one day's contracts cost
-at most `budget_percent` (10) of the Treasury when posted (an empty Treasury posts none). Never AFK income: only a
-command with the items pays. The board is kept in `economy.json` (`ext.jobs`): a restart neither posts twice nor
-loses a delivery.
-
-**Futures.** `/futures long|short <item> <margin> [leverage]` opens a perpetual position on an item's market price:
-its size is margin × leverage at the mark, in items. The mark is the market's 10-minute average of the mid
-(`Market::mark_price`/`twap`), never the last trade, so one player can't move it in one go; an item needs 5 minutes of
-prices first. Leverage: 2x for any traded item, +1x per `volume_per_leverage` (500) items the market traded in 24 h,
-up to `max_leverage` (10x). The liquidation price is shown when it opens and in the menu. Each minute (the market's
-price timer, never per tick) positions are marked: one whose equity falls to `maintenance_percent` (5%) of its size
-is liquidated, online or not, and its whole margin goes to the insurance fund (the player is told when back; a
-margin of `announce_margin` (1,000) or more is told to everyone). A player never loses more than the margin: a move
-past it is the fund's (counted as `gaps`). The house is every trade's other side through the insurance fund (part of
-the Treasury): profits come out of it, losses go in, and a position that would raise the house's net exposure past
-what the fund could pay in a `stress_percent` (30%) move is refused. Fees `fee_percent` (0.2%) of the size, to open
-and to close, go to the Treasury. Funding, each hour: the side with more open interest pays the fund up to
-`funding_percent_hour` (0.05%) of its size, in proportion to the imbalance, from its margins. Caps: `max_player_item`
-(20,000 coins of size on one item) and `max_player_total` (50,000), open interest on an item at most
-`max_item_volume_days` (3) days of its market volume. Positions and their margins (the `futures` pool) are in
-`economy.json` (`ext.futures`), written with the money: a restart keeps them and never liquidates twice.
-
-**The report.** `/eco stats` (anyone) shows the money supply (wallets, savings and money held, the Treasury, the
-insurance fund, each pool), what the server made today (market sales, the daily reward) and destroyed (market
-purchases, operators' `/eco take`), the day's taxes and fees, and how evenly money is spread (Gini over players
+**The report.** `/eco stats` (anyone) shows the money supply (wallets and money held, each pool, the casino's pot),
+what the server made today (market sales, the daily reward, `/eco give`) and destroyed (market purchases, operators'
+`/eco take`), and how evenly money is spread (Gini over players
 with money, the richest ten's share). At 00:00 UTC everyone reads the day before in one line (`report.daily_report`).
 A snapshot of each day is kept 60 days (`report.history_days`) in `economy.json` (`ext.report`). Once a minute
 `world/horizon-smp/web/economy.json` (`report.web_json`) is written off the tick thread for the site's /hub:
-`{"schema": 1, "generated": <ms>, "currency", "today", "pools", "minted_today", "burned_today", "treasury": {balance,
-insurance, income, spent, income_today, spent_today, log}, "taxes": {rates, last_collection}, "days": [...],
+`{"schema": 1, "generated": <ms>, "currency", "today", "pools", "minted_today", "burned_today", "days": [...],
 "daily_report": "<yesterday's line>"}`. The server's Discord relay posts only chat, joins, leaves and deaths: the
 daily line reaches Discord through whoever reads that file (Kira).
 
@@ -365,19 +314,19 @@ folder is untouched until the mod first runs on it; it changes no block and no p
 | File | Holds |
 |---|---|
 | `config.json` | `currency` (default `coins`), `starting_balance` (default 0), `market`: `enabled`, `items` (each item's `buy`, what the market asks, and `sell`, what it pays, 0 closing that side), `daily_sell_coins` (2000) and `daily_sell_items` (640), 0 for no limit; `shop`: `enabled`, `title`, `categories` (`name`, `icon`, `items`); `web`: `url` (Kira's `/smp/ingest`) and `token` (empty: nothing is sent), where the pages of `web/` go; written with the defaults the first time, and again when a newer version adds keys (your values kept) |
-| `economy.json` | balances by player UUID, with the name last seen; `held`: coinflip stakes and lottery tickets being decided; `pools`: the Treasury, its insurance fund and other system pools; `treasury`: its income and spending by kind and its last movements; `ext`: other parts' state written in the same step as the money (`tax`: the week collected, land tax owed; `auction`: the listings, bids, mail and notes) |
+| `economy.json` | balances by player UUID, with the name last seen; `held`: coinflip stakes and lottery tickets being decided; `pools`: the casino's pot and the auction house's bids; `ext`: other parts' state written in the same step as the money (`auction`: the listings, bids, mail and notes) |
 | `places.json` | the spawn, the warps, each player's homes, and the seconds each player has played (written once a minute) |
 | `nicks.json` | each player's nickname and when they last changed it |
 | `vanish.json` | the vanished operators by UUID, with their name |
 | `staff.log` | one line per `/invsee` or `/endersee` menu in which something moved: who, whose, what was taken and put |
 | `market.json` | what each player sold today (coins and items), for the daily limits |
 | `market_prices.json` | each item's price factor and history (minutes for 24 h, hours for 30 days: `[time, mid, traded, sold]`), what each player bought in the last day (no selling it back), the day's summary |
-| `web/market.json` | for the website (`/hub/market`, through Kira), written by a thread each minute prices move: `schema` 1, `generated`, `currency`, `tax_percent`, `taxes_collected`, `daily_summary` (`day`, `lines`), `items` (`id`, `name`, `category`, `price` (the one price; `buy` and `sell` repeat it on the sides the market trades, for older readers), `mid`, `base`, `change_1h`, `change_24h`, `volume_24h`, `day`: 5-minute points, `month`: hours, each `{step, t, price, volume}`). When `web.token` is set, the same thread POSTs each page of `web/` that changed (gzipped, `Authorization: Bearer <token>`) to `<web.url>/<name>`: Kira keeps the last one and serves it to the site; the server needs no inbound access and Kira no key to it |
+| `web/market.json` | for the website (`/hub/market`, through Kira), written by a thread each minute prices move: `schema` 1, `generated`, `currency`, `tax_percent` (always 0, for older readers), `daily_summary` (`day`, `lines`), `items` (`id`, `name`, `category`, `price` (the one price; `buy` and `sell` repeat it on the sides the market trades, for older readers), `mid`, `base`, `change_1h`, `change_24h`, `volume_24h`, `day`: 5-minute points, `month`: hours, each `{step, t, price, volume}`). When `web.token` is set, the same thread POSTs each page of `web/` that changed (gzipped, `Authorization: Bearer <token>`) to `<web.url>/<name>`: Kira keeps the last one and serves it to the site; the server needs no inbound access and Kira no key to it |
 | `presence.json` | the players who have joined (no welcome again), and the day each last got the daily reward |
 | `board.json` | the players who hid the sidebar (`/sidebar off`) |
 | `casino.json` | the day's ledger: each player's bets, wins and rounds today (the daily loss cap), the day's biggest wins, each game's totals, the pot's last sweep |
 | `claims.json` | each claimed chunk (`<dimension> <chunk x> <chunk z>`) with its owner, and whom each owner trusts |
-| `audit.log` | one JSON line per change, written before the change: `time` (ms), `kind` (`open`, `pay`, `grant`, `land_tax`...), `amount`, `from`/`to` with their balance before, `by` for an operator, `to_pool`/`from_pool` with `pool_before` and `reason` for a pool's movement; a trade's line (`trade`: both players, their items and money) comes before its swap, `trade_failed` after one that didn't go through |
+| `audit.log` | one JSON line per change, written before the change: `time` (ms), `kind` (`open`, `pay`, `grant`, `ah_listing_fee`...), `amount`, `from`/`to` with their balance before, `by` for an operator, `to_pool`/`from_pool` with `pool_before` and `reason` for a pool's movement; a trade's line (`trade`: both players, their items and money) comes before its swap, `trade_failed` after one that didn't go through |
 
 `economy.json` is written whole to a temporary file, flushed and renamed over the old one, at most once a server tick
 and when the world closes: a crash leaves the old file or the new one. If it can't be read, the economy stays off (the
@@ -390,13 +339,13 @@ acting player's items (API 9), the server menus and `native_exchange_items` (API
 `native_run_command` (API 21), `native_destroy_block` (API 14), `native_right_click_block`, the acting player and the
 action bar (API 21), `native_block_spread`, `native_piston_move`, `native_explosion_detonate`, `native_fill_bucket` and
 `native_attack_entity` (API 22), `native_sidebar`, `native_tab_list` and `native_tick_stats` (API 49),
-`native_set_nickname` and `native_text_allowed` (API 62), `native_hide_player` (horizon#7003), the server tick and the world lifecycle.
+`native_set_nickname` and `native_text_allowed` (API 62), `native_hide_player` (API 314, horizon#7003), the server tick and the world lifecycle.
 `compatibility.json` names `"hooks": 58`.
 
 | File | What it is |
 |---|---|
-| `mixins/smp/horizon-mixin.toml` | The bundle: thirty-two modules and the HEAD hooks |
-| `mixins/smp/smp_store.rs`, `smp_economy.rs`, `smp_market.rs`, `smp_recipes.rs`, `smp_shop.rs`, `smp_nick.rs`, `smp_trade.rs`, `smp_games.rs`, `smp_lottery.rs`, `smp_places.rs`, `smp_claims.rs`, `smp_board.rs`, `smp_presence.rs`, `smp_tax.rs`, `smp_auction.rs`, `smp_bank.rs`, `smp_report.rs`, `smp_jobs.rs`, `smp_market_prices.rs`, `smp_market_menu.rs`, `smp_market_chart.rs`, `smp_invsee.rs`, `smp_futures.rs`, `smp_vanish.rs` | The rules, no game types (a trade's stacks are a type parameter): added to the game as `game::smp_store`, `game::smp_economy`, `game::smp_market`, `game::smp_recipes`, `game::smp_shop`, `game::smp_nick`, `game::smp_trade`, `game::smp_games`, `game::smp_lottery`, `game::smp_places`, `game::smp_claims`, `game::smp_board`, `game::smp_presence`, `game::smp_tax`, `game::smp_auction`, `game::smp_bank`, `game::smp_report`, `game::smp_jobs`, `game::smp_market_prices`, `game::smp_market_menu`, `game::smp_market_chart`, `game::smp_invsee`, `game::smp_futures`, `game::smp_vanish`; also this crate's modules (`src/lib.rs`), for their tests |
+| `mixins/smp/horizon-mixin.toml` | The bundle: twenty-eight modules and the HEAD hooks |
+| `mixins/smp/smp_store.rs`, `smp_economy.rs`, `smp_market.rs`, `smp_recipes.rs`, `smp_shop.rs`, `smp_nick.rs`, `smp_trade.rs`, `smp_games.rs`, `smp_lottery.rs`, `smp_places.rs`, `smp_claims.rs`, `smp_board.rs`, `smp_presence.rs`, `smp_auction.rs`, `smp_report.rs`, `smp_market_prices.rs`, `smp_market_menu.rs`, `smp_market_chart.rs`, `smp_invsee.rs`, `smp_vanish.rs` | The rules, no game types (a trade's stacks are a type parameter): added to the game as `game::smp_store`, `game::smp_economy`, `game::smp_market`, `game::smp_recipes`, `game::smp_shop`, `game::smp_nick`, `game::smp_trade`, `game::smp_games`, `game::smp_lottery`, `game::smp_places`, `game::smp_claims`, `game::smp_board`, `game::smp_presence`, `game::smp_auction`, `game::smp_report`, `game::smp_market_prices`, `game::smp_market_menu`, `game::smp_market_chart`, `game::smp_invsee`, `game::smp_vanish`; also this crate's modules (`src/lib.rs`), for their tests |
 | `mixins/smp/glue.rs` | The state for the open world and the edges to the game's types (`game::smp_glue`) |
 | `mixins/smp/{register,command,tick,lifecycle,menu_clicked,menu_closed,destroy_block,right_click_block,block_spread,piston_move,explosion_detonate,fill_bucket,attack_entity}.rs` | One small helper per hook |
 | `mixins/smp/smp_casino.rs`, `smp_casino_roulette.rs`, `smp_casino_slots.rs`, `smp_casino_crash.rs`, `smp_casino_blackjack.rs` | The casino's rules, menus and effects (`game::smp_casino*`) |

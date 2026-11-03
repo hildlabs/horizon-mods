@@ -1,29 +1,68 @@
 id = "basic_hud"
 kind = "native-mod"
 name = "The Basic HUD"
-summary = "Effect timers, potions, golden apples and totems carried, totems used by each player, and armour, elytra and shield durability."
+summary = "A visual HUD editor with movable widgets, FPS, coordinates, effect timers, cooldowns, mini armour and a customizable Tab list."
 description = """
-A small HUD box in a corner of the screen.
+![The Basic HUD](https://raw.githubusercontent.com/repositorykreml1n/the-basic-hud/v0.4.1/assets/cover-0.4.1.png)
 
-## What it shows
+## Your HUD, your layout
 
-- Active effects with their time left. Potion effects are pinned by default; any other effect can be pinned on the mod's settings page, or all of them shown at once.
-- Potions of each kind, golden apples, enchanted golden apples and totems in your inventory.
-- Totems each player has used, above that player's name. Your own count is in the box.
-- Durability of worn armour, elytra and a held shield.
+Arrange 13 independent widgets directly over the game. Drag, resize and style each block with colours, opacity, padding and shadows. Use full labels or compact icons with useful values such as ×16 and 1:45.
 
-The count of a player's totems resets when they die or when you leave the world.
+Includes effects, consumables, durability, observed totem uses, available player-health data, item cooldowns, coordinates, FPS, ping, optional speed/CPS/clock, and mini armour next to the hotbar. Customize the Tab list with coloured numeric ping, bars, counts, sorting, scale and opacity.
 
-## What it does not do
+Ten interface languages plus Auto. A short first-visit guide can be replayed through ?. Reset requires confirmation; leaving unsaved edits offers Save / Discard changes / Stay. Failed writes retain the draft.
 
-- It builds on one Horizon commit only, 68ac6f6 (Minecraft 26.3). Counting totems and writing above a player have no hook point, so it hooks two of the game's own functions (totem_event, name_tag_geometry). The rest uses hook points but reads the game's internal data.
-- It knows only what the client is told: a totem used out of your sight is not counted.
-- Its own texts are in English. Effect and item names follow the game's language.
-- Tested on Windows in single player and over LAN with two clients, not on a dedicated server."""
+## Install and compatibility
+
+Native .hnmod for Minecraft 26.3, pinned to Horizon **68ac6f647e7022b2c696e81863d7cface28c9416**. Install through the launcher and select **Performance**. Dev can overflow the startup stack on this Windows baseline. Other Nightlies require separate verification.
+
+Client-side only. Unknown player health remains unknown, unseen totem uses cannot be counted and server-plugin-only timers are unavailable. No server mod is required. No FPS improvement is promised. Native mods compile into the game and run with the player’s rights, without a sandbox. Tested on Windows; other platforms were not tested.
+
+## Other languages
+
+**Русский:** редактор поверх игры, размер и оформление каждого блока, значки с числами, FPS, координаты, кулдауны, мини-броня и настройка Tab. Обучение один раз; подтверждение сброса и выхода с правками.
+
+**Українська:** редактор поверх гри, розмір і стиль кожного віджета, значки зі значеннями, FPS, координати, час відновлення, мініброня та налаштування Tab. Навчання під час першого входу й захист незбережених змін.
+
+**Deutsch:** Editor direkt im Spiel, frei verschiebbare und skalierbare Widgets, Symbole mit Werten, FPS, Koordinaten, Abklingzeiten, Rüstungsanzeige und anpassbare Tab-Liste. Einführung beim ersten Besuch und Schutz ungespeicherter Änderungen.
+
+**Français :** éditeur superposé au jeu, widgets déplaçables et redimensionnables, icônes avec valeurs, FPS, coordonnées, délais de récupération, petite vue de l’armure et liste Tab personnalisable. Tutoriel initial et protection des modifications non enregistrées.
+
+**Español:** editor superpuesto al juego, widgets movibles y ajustables, iconos con valores, FPS, coordenadas, tiempos de recarga, vista pequeña de la armadura y lista Tab personalizable. Tutorial inicial y protección de cambios sin guardar.
+
+[Full update notes in six languages](https://github.com/repositorykreml1n/the-basic-hud/blob/main/CHANGELOG.md)
+
+MIT. Not an official Horizon, Mojang or Microsoft product. Cover is a generated promotional illustration, not a gameplay screenshot or measured FPS claim."""
 authors = ["repositorykreml1n"]
 owners = ["repositorykreml1n"]
 license = "MIT"
 source = "https://github.com/repositorykreml1n/the-basic-hud"
+icon = "https://raw.githubusercontent.com/repositorykreml1n/the-basic-hud/main/icon.png"
+
+[[versions]]
+version = "0.4.1"
+published = "2026-11-03"
+game = "26.3"
+file = "basic_hud-0.4.1.hnmod"
+sha256 = "36431d3a2d810e2aefbd8611767a80f9184e3df032e4cc2b9b9fd9398f794560"
+changelog = """
+Major update from 0.1.0 to 0.4.1.
+
+- Visual in-game editor: drag, individual scale, colours, opacity, shadows, padding and snap.
+- 13 widgets, including FPS, coordinates, available player health and actual item cooldowns.
+- Icons + values: ×16, 1:45 and durability without long labels.
+- Mini armour beside the hotbar, including elytra.
+- Custom Tab list: numeric ping, bars, player counts, sorting and scale.
+- Smoothed optional speed; single-player ping labelled Local.
+- Ten UI languages plus Auto; first-visit tutorial, replay through ?.
+- Reset confirmation; Save / Discard changes / Stay on leaving with edits; failed-save recovery.
+
+Pinned to Minecraft 26.3 / Horizon 68ac6f6. Use the Performance build profile on Windows; Dev can overflow the startup stack on this baseline. No compatibility with other Nightlies or FPS gain is claimed.
+
+Validated: 67 Rust test executions, native build, isolated gameplay/editor tests, restart persistence and ordinary asynchronous startup.
+
+Full notes (English + Russian, Ukrainian, German, French and Spanish summaries): https://github.com/repositorykreml1n/the-basic-hud/blob/main/CHANGELOG.md"""
 
 [[versions]]
 version = "0.1.0"

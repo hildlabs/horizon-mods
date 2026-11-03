@@ -1,0 +1,41 @@
+id = "chop"
+kind = "native-mod"
+name = "Chop!"
+summary = "Cut one log and the whole tree tips over, crashes down and breaks apart, with soft vanilla sounds and particles."
+description = """
+Cut one log with an axe: the whole tree tips over like a real falling tree, crashes to the ground, and breaks apart from the base to the top in little pops. Everything is made of vanilla sounds and particles: no resource pack.
+
+- **The log shakes while you cut it**, then pops when it gives way.
+- **A physical fall**: the trunk drops onto the stump, creaks, tips over with gravity and stops where it meets the ground. Leaves in the way are crushed.
+- **Falls in front of you**, within an adjustable angle, toward the clearest side.
+- **A cute break-up** from the base to the top, with clouds, sparkles and hearts.
+- **Replants a sapling** of the tree's kind (from its loot, or always).
+- **Chain reactions**: a falling trunk can knock over the next tree.
+- **Adjustable damage**: hurts monsters by default; animals, allies and players are spared unless you turn them on.
+- Vanilla loot (Fortune, Silk Touch), honest axe wear, fall preview, shaking trees with an empty hand, giant mushrooms and Nether fungi, angry bees, birds, apples, biome-tinted leaves, optional loot into your inventory.
+- **Everything is configurable in game**, with commands or by clicking in the chat: `/chop config` (operators), `/chop perso` (each player's sounds, particles and preview), `/chop stats`, `/chop aide`. The menus are in French.
+
+**What it does and doesn't do.** It runs server-side, where the world runs: players who join install nothing. No network access, no telemetry, never runs a program. It reads and writes one file, `<world>/data/chop.txt` (settings, stats, player-placed logs). It only touches trees, the sapling it replants, its own `block_display` entities and what a falling tree hits. Besides the game's functions, it runs a few vanilla commands as the server: `kill` on its own tagged displays, `item modify` for the axe's wear, `damage` on a player the tree hits (off by default), and `summon item` / `setblock … keep` for loot and replanting when the tree is in another dimension.
+
+Native source mod: install it on the launcher's Mods page, press Build there, and confirm the native-code warning. The launcher builds a separate game with it, and it runs with your account's permissions. Each version is pinned to one Horizon Nightly and Horizon Mixins revision, named in its changelog; the launcher builds those exact revisions.
+
+Original mod by Mayonesu0. All rights reserved, except the grants in its [LICENSE](https://github.com/Mayonesu0/chop/blob/main/LICENSE): players may use it unchanged, Horizon's registry may distribute it, and Horizon's reviewers may read it to review it."""
+authors = ["Mayonesu0", "Claude"]
+owners = ["Mayonesu0"]
+license = "LicenseRef-Chop-1.0"
+source = "https://github.com/Mayonesu0/chop"
+icon = "https://raw.githubusercontent.com/Mayonesu0/chop/main/registry/icon.png"
+key = "RWSwx1v4zUCUjQ8rssfZCXvXkvgVc9TbA60RJyCtVCeMx4lSTanIleIs"
+
+[[versions]]
+version = "1.0.1"
+published = "2026-11-03"
+game = "26.3"
+file = "chop-1.0.1.hnmod"
+sha256 = "5abac195c54da7716f35f641489c0dba780444c91b0b3e4f3387ecd4cb2b260b"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUSwx1v4zUCUjfR+WYS97be0UecaBcKGyNXNsCQAPVG0j2U2yeMfnNPkWMEU9CMOobMI6nKaPj/Kqv0EPAuw2xiPnRaduNgI8wA=\r
+trusted comment: timestamp:1793711491\tfile:chop-1.0.1.hnmod\thashed\r
+eOi2t+LMQ4LOM/nsJqmpvAraWsLcgdRZA4OJotjBkgxcANkG3MeZ9tbAKbEaidIy1kBSZyc4Dri+3MtOsd+xBA=="""
+changelog = "First release (1.0.0 was never published: its package carried a LICENSE file the registry's checker refuses; the code is the same). Pinned to Horizon Nightly 2026-11-01 (c9d474d) and Horizon Mixins ddd9700; the launcher builds those exact revisions."

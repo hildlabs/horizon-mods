@@ -10,9 +10,6 @@
 use crate::game::{
     Game,
     smp_auction::{self, AuctionHouse},
-    smp_bank::{self, Bank},
-    smp_futures::{self, Futures},
-    smp_jobs::{self, Jobs},
     smp_report::{self, Report},
     native_server::{NativeCommand, NativeServerPlayer, NativeSidebar},
     smp_board::{self, Board, Line},
@@ -30,7 +27,6 @@ use crate::game::{
     smp_nick::{self, Names as _, Nicks},
     smp_shop::{self, Shop},
     smp_store,
-    smp_tax::{self, Taxes},
     smp_trade::{self, Act, Cell, Trades},
     smp_vanish::{self, Vanish},
 };
@@ -44,7 +40,7 @@ use std::{path::PathBuf, sync::Mutex};
 /// The mod's id, name and version.
 pub const ID: &str = "smp";
 pub const NAME: &str = "SMP";
-pub const VERSION: &str = "0.29.0";
+pub const VERSION: &str = "0.31.0";
 
 /// `config.json` in `world/horizon-smp/`, written with its defaults the
 /// first time, and again with the keys a newer version adds (values kept).
@@ -62,12 +58,8 @@ pub struct Config {
     pub board: smp_board::Config,
     pub presence: smp_presence::Config,
     pub nicks: smp_nick::Config,
-    pub taxes: smp_tax::Config,
     pub auction: smp_auction::Config,
-    pub bank: smp_bank::Config,
     pub report: smp_report::Config,
-    pub jobs: smp_jobs::Config,
-    pub futures: smp_futures::Config,
     pub web: WebPush,
 }
 
@@ -96,18 +88,10 @@ pub struct Smp {
     dir: PathBuf,
     /// An error when `economy.json` can't be read: the commands say so.
     economy: Result<Economy, String>,
-    /// The tax code and its weekly collection (None with the economy off).
-    taxes: Option<Taxes>,
     /// The auction house (None with the economy off).
     auction: Option<AuctionHouse>,
-    /// Savings and their interest (None with the economy off).
-    bank: Option<Bank>,
     /// `/eco stats`, the daily report, `web/economy.json`.
     report: Option<Report>,
-    /// The day's contracts (None with the economy off).
-    jobs: Option<Jobs>,
-    /// Positions on the market's prices (None with the economy off).
-    futures: Option<Futures>,
     market: Market,
     shop_config: smp_shop::Config,
     /// The `/shop` menus open.
@@ -201,23 +185,20 @@ fn open(dir: PathBuf) -> Smp {
     if let Err(e) = &economy {
         log::error!("[smp] the economy is off: {e}");
     }
-    let taxes = economy.as_ref().ok().map(|e| Taxes::open(e, config.taxes));
     let auction = economy.as_ref().ok().map(|e| AuctionHouse::open(e, config.auction));
-    let bank = economy.as_ref().ok().map(|e| Bank::open(e, config.bank));
     let report = economy.as_ref().ok().map(|e| Report::open(e, config.report));
-    let jobs = economy.as_ref().ok().map(|e| Jobs::open(e, config.jobs));
-    let futures = economy.as_ref().ok().map(|e| {
-        let mut f = Futures::open(e, config.futures);
-        f.rebase(&market.rebased);
-        f
-    });
     let places = Places::open(&dir, config.places);
     if let Err(e) = &places {
         log::error!("[smp] homes and warps are off: {e}");
     }
-    let claims = Claims::open(&dir, config.claims);
-    if let Err(e) = &claims {
-        log::error!("[smp] claims are off: {e}");
+    let mut claims = Claims::open(&dir, config.claims);
+    match &mut claims {
+        Ok(c) => {
+            for line in c.clear_free_zone() {
+                log::warn!("[smp] {line}");
+            }
+        }
+        Err(e) => log::error!("[smp] claims are off: {e}"),
     }
     let board = Board::open(&dir, config.board);
     let vanish = Vanish::open(&dir);
@@ -255,12 +236,8 @@ fn open(dir: PathBuf) -> Smp {
     Smp {
         dir,
         economy,
-        taxes,
         auction,
-        bank,
         report,
-        jobs,
-        futures,
         market,
         shop_config: config.shop,
         shop: Shop::default(),
@@ -301,26 +278,9 @@ fn state(dir: PathBuf) -> std::sync::MutexGuard<'static, Option<Smp>> {
 }
 
 fn save(smp: &mut Smp) {
-    // The tax state is written with the balances, in the same file.
-    if let (Some(t), Ok(e)) = (&mut smp.taxes, &mut smp.economy) {
-        t.store(e);
-    }
-    // And the bank's accounts.
-    if let (Some(b), Ok(e)) = (&mut smp.bank, &mut smp.economy) {
-        b.store(e);
-    }
+    // The report's state is written with the balances, in the same file.
     if let (Some(r), Ok(e)) = (&mut smp.report, &mut smp.economy) {
         r.store(e);
-    }
-    if let (Some(j), Ok(e)) = (&mut smp.jobs, &mut smp.economy) {
-        j.store(e);
-    }
-    // And the futures' positions (their margins are in the `futures` pool).
-    if let (Some(f), Ok(e)) = (&mut smp.futures, &mut smp.economy) {
-        f.store(e);
-        for p in f.problems.drain(..) {
-            log::error!("[smp] {p}");
-        }
     }
     // So are the auction house's listings, bids and mail.
     if let (Some(a), Ok(e)) = (&mut smp.auction, &mut smp.economy) {
@@ -432,12 +392,6 @@ pub fn commands(commands: &mut Vec<NativeCommand>) {
         "afk",
         "nick <name:word>",
         "realname <nick:word>",
-        "treasury",
-        "treasury log",
-        "taxes",
-        "taxes pay",
-        "eco taxes",
-        "eco taxes pay",
         "ah",
         "ah search <words:text>",
         "ah sell <price:integer> [count:integer]",
@@ -448,19 +402,8 @@ pub fn commands(commands: &mut Vec<NativeCommand>) {
         "ah claim",
         "ah mine",
         "ah mail",
-        "bank",
-        "bank deposit <amount:word>",
-        "bank withdraw <amount:word>",
         "eco stats",
         "money stats",
-        "jobs",
-        "jobs deliver <contract:integer>",
-        "futures",
-        "futures list",
-        "futures info <item:item>",
-        "futures long <item:item> <margin:integer> [leverage:word]",
-        "futures short <item:item> <margin:integer> [leverage:word]",
-        "futures close <position:integer>",
     ] {
         commands.push(NativeCommand::new(usage));
     }
@@ -469,15 +412,15 @@ pub fn commands(commands: &mut Vec<NativeCommand>) {
         "setwarp <name:word>",
         "delwarp <name:word>",
         "nick <name:word> <nick:word>",
-        "treasury pay <player:word> <amount:integer> <reason:text>",
         "vanish",
         "vanish list",
     ] {
         commands.push(NativeCommand::op(usage, 3));
     }
-    // Operators take a cheat's gains into the Treasury; nobody gives or
-    // sets money (grants come from the Treasury: `/treasury pay`).
+    // Operators make money (an event prize, a bug refund: with a reason
+    // everyone reads) and take a cheat's gains away.
     for name in ["eco", "money"] {
+        commands.push(NativeCommand::op(&format!("{name} give <player:word> <amount:integer> <reason:text>"), 3));
         commands.push(NativeCommand::op(&format!("{name} take <player:word> <amount:integer> [reason:text]"), 3));
     }
 }
@@ -506,9 +449,130 @@ impl Bag for GameBag<'_, '_> {
     }
 }
 
-const COMMANDS: [&str; 21] = [
+/// The most encoded data one listed stack may carry (a shulker box of
+/// written books can hold megabytes; economy.json is written whole).
+const MAX_STACK_DATA: usize = 32 * 1024;
+
+/// A stack as the auction house keeps it: `ItemStack.CODEC`'s NBT (id,
+/// count, components), as the game saves it in player files, in hex.
+fn encode_stack(stack: &ItemStack) -> Option<String> {
+    let tag = horizon_items::item_nbt::item_to_nbt(stack);
+    let bytes = horizon_world::nbt::write_network(&tag, horizon_world::nbt::Limits::saved()).ok()?;
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn decode_stack(data: &str) -> Option<ItemStack> {
+    if data.len() % 2 != 0 || data.len() > 2 * MAX_STACK_DATA {
+        return None;
+    }
+    let bytes: Vec<u8> = (0..data.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(data.get(i..i + 2)?, 16).ok())
+        .collect::<Option<_>>()?;
+    let (tag, _) = horizon_world::nbt::read_network(&bytes, horizon_world::nbt::Limits::default()).ok()?;
+    horizon_items::item_nbt::item_from_nbt(&tag)
+}
+
+fn whole_of(stack: &ItemStack) -> Option<smp_auction::Whole> {
+    Some(smp_auction::Whole { item: stack.item.to_string(), count: stack.count, data: encode_stack(stack)? })
+}
+
+/// Why `stack` can't be listed whole, if it can't: only what comes back
+/// exactly as it went (every component read back the same) is taken.
+fn unsellable(stack: &ItemStack) -> Option<String> {
+    if &*stack.item == "minecraft:filled_map" && stack.data().and_then(|d| d.map_id).is_some_and(|m| m >= CHART_MAPS) {
+        return Some("Market charts are free at /market: they can't be sold.".into());
+    }
+    let Some(data) = encode_stack(stack) else {
+        return Some("That stack can't be listed: its data can't be written.".into());
+    };
+    if data.len() > 2 * MAX_STACK_DATA {
+        return Some("That stack holds too much (books, contents...) to be listed.".into());
+    }
+    if decode_stack(&data).as_ref() != Some(stack) {
+        return Some("That stack can't be listed whole: some of its data wouldn't come back the same.".into());
+    }
+    None
+}
+
+/// The same stack but for the count.
+fn same_kind(a: &ItemStack, b: &ItemStack) -> bool {
+    a.item == b.item && a.damage == b.damage && a.extra == b.extra
+}
+
+/// Whether `stack` fits whole in `slots` (the 36 main slots), as
+/// `Inventory.add` places it: onto equal stacks, then into empty slots.
+fn fits_in(slots: &[Option<ItemStack>], stack: &ItemStack, max: u32) -> bool {
+    let room: u32 = slots
+        .iter()
+        .take(36)
+        .map(|s| match s {
+            None => max,
+            Some(s) if same_kind(s, stack) => max.saturating_sub(s.count),
+            Some(_) => 0,
+        })
+        .sum();
+    room >= stack.count
+}
+
+/// `native_give_stack` for the auction house: what didn't fit, encoded
+/// again (all of it when the data can't be read: it waits in the mail).
+fn give_whole_to(game: &mut Game<'_>, uuid: u128, w: &smp_auction::Whole) -> Option<smp_auction::Whole> {
+    let Some(stack) = decode_stack(&w.data) else {
+        log::error!("[smp] auction house: a stack's data can't be read; it stays in the mail");
+        return Some(w.clone());
+    };
+    let rest = game.native_give_stack(uuid, stack)?;
+    Some(whole_of(&rest).unwrap_or_else(|| w.clone()))
+}
+
+impl smp_auction::Hand for GameBag<'_, '_> {
+    /// The acting player's state is swapped into the game inside their
+    /// command, so the hand is the game's selected slot (no helper hands out
+    /// a whole stack yet).
+    fn held_whole(&self) -> Option<Result<smp_auction::Whole, String>> {
+        let s = self.0.inventory.get(self.0.selected)?.as_ref()?;
+        if let Some(why) = unsellable(s) {
+            return Some(Err(why));
+        }
+        whole_of(s).map(Ok)
+    }
+    fn take_held(&mut self, held: &smp_auction::Whole, count: u32) -> Option<smp_auction::Whole> {
+        self.0.player.as_ref()?;
+        let selected = self.0.selected;
+        let slot = self.0.inventory.get_mut(selected)?;
+        let s = slot.as_ref()?;
+        if count == 0 || count > s.count || encode_stack(s).as_deref() != Some(held.data.as_str()) {
+            return None;
+        }
+        let mut taken = s.clone();
+        taken.count = count;
+        let encoded = whole_of(&taken)?;
+        if count == s.count {
+            *slot = None;
+        } else if let Some(s) = slot.as_mut() {
+            s.count -= count;
+        }
+        Some(encoded)
+    }
+    fn fits(&mut self, w: &smp_auction::Whole) -> bool {
+        let Some(stack) = decode_stack(&w.data) else {
+            return false;
+        };
+        let max = self.0.native_max_stack_size(&stack.item).unwrap_or(64).max(1);
+        fits_in(&self.0.inventory, &stack, max)
+    }
+    fn give_whole(&mut self, w: &smp_auction::Whole) -> Option<smp_auction::Whole> {
+        let Some(me) = self.0.native_acting_player() else {
+            return Some(w.clone());
+        };
+        give_whole_to(self.0, me.uuid, w)
+    }
+}
+
+const COMMANDS: [&str; 16] = [
     "balance", "bal", "pay", "baltop", "eco", "money", "worth", "sell", "buy", "shop", "market", "trade", "coinflip",
-    "lottery", "treasury", "taxes", "ah", "bank", "jobs", "casino", "futures",
+    "lottery", "ah", "casino",
 ];
 
 /// `/pay <player> <amount>`'s receiver (account, name) and amount, as
@@ -523,27 +587,6 @@ fn pay_target(e: &Economy, line: &str) -> Option<(u128, String, i64)> {
     let amount = smp_economy::parse_amount(amount)?;
     let (to, account) = e.find(who)?;
     Some((to, account.name.clone(), amount))
-}
-
-/// The market's prices as the futures read them: the mark is the 10-minute
-/// average of the mid (never the last trade), once the market has at least
-/// 5 minutes of it; the volume is the last 24 hours'.
-struct MarketPrices<'a>(&'a Market);
-
-impl smp_futures::Prices for MarketPrices<'_> {
-    fn mark(&self, id: &str, now: i64) -> Option<f64> {
-        self.0.mark_price(id, now)?;
-        self.0.twap(id, 10, now)
-    }
-    fn volume(&self, id: &str, now: i64) -> u64 {
-        self.0.volume(id, now, 24)
-    }
-}
-
-/// The market's (sell, buy) for one item, as the contracts read it.
-fn market_price(market: &Market, id: &str) -> Option<(i64, i64)> {
-    let p = market.price(id);
-    (p.sell > 0 || p.buy > 0).then_some((p.sell, p.buy))
 }
 
 /// The players on, as the places see them.
@@ -644,7 +687,7 @@ pub(in crate::game) fn perform(
         }
     }
     // A nickname where a command names a player: the player's name.
-    let names_a_player = matches!(word, "pay" | "tpa" | "trade" | "playtime" | "tpaccept" | "tpdeny" | "eco" | "money" | "treasury");
+    let names_a_player = matches!(word, "pay" | "tpa" | "trade" | "playtime" | "tpaccept" | "tpdeny" | "eco" | "money");
     let resolved = smp.nicks.as_ref().ok().filter(|_| names_a_player).and_then(|n| {
         let accounts = smp.economy.as_ref().map(|e| e.accounts()).unwrap_or_default();
         let is_name = |w: &str| players.iter().any(|p| p.name.eq_ignore_ascii_case(w)) || accounts.iter().any(|a| a.1.eq_ignore_ascii_case(w));
@@ -732,12 +775,7 @@ pub(in crate::game) fn perform(
             on.or_else(|| economy?.name_of(u).map(str::to_owned))
                 .unwrap_or_else(|| smp_store::uuid_string(u))
         };
-        let owed = match (&smp.taxes, economy) {
-            (Some(t), Some(e)) if line.split_whitespace().eq(["claim"]) => t.may_claim(e, me.uuid).err(),
-            _ => None,
-        };
         match (&mut smp.claims, at) {
-            (Ok(_), Some(_)) if owed.is_some() => vec![Out::Error(owed.expect("checked"))],
             (Ok(c), Some(at)) => c.command(&me, &at, played, &find, &name_of, line).unwrap_or_default(),
             (Ok(_), None) => vec![Out::Error("You are not in the world.".into())],
             (Err(_), _) => vec![Out::Error(
@@ -745,18 +783,7 @@ pub(in crate::game) fn perform(
             )],
         }
     } else if smp_places::COMMANDS.contains(&word) {
-        // A teleport's fee is paid when it happens; refused now when the
-        // player can't pay it.
-        let short = match (&smp.places, &smp.economy) {
-            (Ok(p), Ok(e)) if p.fee(line) > e.balance(me.uuid) => Some(format!(
-                "This teleport costs {} (to the Treasury); you have {}.",
-                e.money(p.fee(line)),
-                e.money(e.balance(me.uuid))
-            )),
-            _ => None,
-        };
         match &mut smp.places {
-            Ok(_) if short.is_some() => vec![Out::Error(short.expect("checked"))],
             Ok(p) => {
                 let seen: Vec<NativeServerPlayer> = players.iter().filter(|p| !hidden.contains(&p.uuid)).cloned().collect();
                 p.command(&me, &bodies(&seen), now, line).unwrap_or_default()
@@ -779,35 +806,15 @@ pub(in crate::game) fn perform(
             }
             Err(_) => vec![Out::Error("The economy is off: its file can't be read (see the server log).".into())],
         }
-    } else if word == "futures" {
-        futures_command(game, smp, &me, now, line)
     } else {
         match &mut smp.economy {
         Ok(e) => {
             e.seen(me.uuid, &me.name);
             let on: Vec<(u128, String)> = players.iter().map(|p| (p.uuid, p.name.clone())).collect();
             let mut bag = GameBag(game);
-            let my_chunks = smp.claims.as_ref().map_or(0, |c| c.held(me.uuid));
-            // The wealth tax counts bank savings (`/eco taxes` shows the bill).
-            if let (Some(t), Some(b)) = (&mut smp.taxes, &smp.bank)
-                && matches!(word, "eco" | "taxes")
-            {
-                t.savings = b.savings();
-            }
-            let taxes = smp.taxes.as_mut();
-            let bank = smp.bank.as_mut();
             let report = smp.report.as_ref();
-            taxes
-                .and_then(|t| t.command(e, &me, my_chunks, line))
-                .or_else(|| {
-                    let savings = bank.as_ref().map(|b| b.savings()).filter(|_| line.ends_with("stats")).unwrap_or_default();
-                    report.and_then(|r| r.command(e, &savings, line))
-                })
-                .or_else(|| bank.and_then(|b| b.command(e, &me, line)))
-                .or_else(|| {
-                    let price = |id: &str| market_price(&smp.market, id);
-                    smp.jobs.as_mut()?.command(e, &me, trades, &mut bag, &price, line)
-                })
+            report
+                .and_then(|r| r.command(e, line))
                 .or_else(|| {
                     // A payment counts toward the receiver's daily selling
                     // limit (alts can't sell for a main past it).
@@ -1125,10 +1132,6 @@ pub(in crate::game) fn menu_clicked(game: &mut Game<'_>, uuid: u128, window: i32
         shop_clicked(game, smp, uuid, slot, mode == 1);
         return;
     }
-    if smp.futures.as_ref().is_some_and(|f| f.views.get(&uuid).is_some_and(|v| v.0 == Some(window))) {
-        futures_clicked(game, smp, uuid, slot);
-        return;
-    }
     if smp.market_menus.views.get(&uuid).is_some_and(|v| v.0 == Some(window)) {
         market_clicked(game, smp, uuid, slot);
         return;
@@ -1185,12 +1188,6 @@ pub(in crate::game) fn menu_closed(game: &mut Game<'_>, uuid: u128, window: i32)
     let smp = guard.as_mut().expect("opened");
     if smp.shop.views.get(&uuid).is_some_and(|v| v.0 == Some(window)) {
         smp.shop.views.remove(&uuid);
-        return;
-    }
-    if let Some(f) = &mut smp.futures
-        && f.views.get(&uuid).is_some_and(|v| v.0 == Some(window))
-    {
-        f.views.remove(&uuid);
         return;
     }
     if smp.market_menus.views.get(&uuid).is_some_and(|v| v.0 == Some(window)) {
@@ -1294,6 +1291,25 @@ impl Bag for MenuBag<'_, '_> {
         }
         let line = format!("give {} {item} {count}", self.name);
         if self.game.native_run_command(&line) { count } else { 0 }
+    }
+}
+
+impl smp_auction::Hand for MenuBag<'_, '_> {
+    fn held_whole(&self) -> Option<Result<smp_auction::Whole, String>> {
+        None
+    }
+    fn take_held(&mut self, _held: &smp_auction::Whole, _count: u32) -> Option<smp_auction::Whole> {
+        None
+    }
+    fn fits(&mut self, w: &smp_auction::Whole) -> bool {
+        let Some(stack) = decode_stack(&w.data) else {
+            return false;
+        };
+        let max = self.game.native_max_stack_size(&stack.item).unwrap_or(64).max(1);
+        fits_in(&self.stacks(), &stack, max)
+    }
+    fn give_whole(&mut self, w: &smp_auction::Whole) -> Option<smp_auction::Whole> {
+        give_whole_to(self.game, self.uuid, w)
     }
 }
 
@@ -1484,7 +1500,6 @@ fn market_items(smp: &Smp, uuid: u128, now: i64) -> Vec<Option<ItemStack>> {
     use smp_market_menu::{Cell as C, Chart};
     let economy = smp.economy.as_ref().ok();
     let money = |n: i64| economy.map_or_else(|| n.to_string(), |e| e.money(n));
-    let tax = |n: i64| smp.market.tax_on(n);
     let name = |id: &str| smp_market::title_name(id);
     smp.market_menus
         .layout(&smp.shop_config, &smp.market.config, uuid)
@@ -1505,7 +1520,6 @@ fn market_items(smp: &Smp, uuid: u128, now: i64) -> Vec<Option<ItemStack>> {
                     let mut lines = price_lines(smp, &id, now);
                     let base = smp.market.base(&id);
                     lines.push((format!("Base price: {}", money(base.buy.max(base.sell))), "gray"));
-                    lines.push((format!("Tax: {}% to the Treasury", smp.market.config.dynamic.tax_percent), "gray"));
                     if let Some(left) = smp.market.items_left(uuid, now, &id) {
                         lines.push((format!("You may still sell {left} today"), "gray"));
                     }
@@ -1514,19 +1528,13 @@ fn market_items(smp: &Smp, uuid: u128, now: i64) -> Vec<Option<ItemStack>> {
                 C::Buy(id, n) => {
                     // What these n cost now, the price moving as they go.
                     let cost = smp.market.value(&id, n, true).0;
-                    let mut b = with_lore(
-                        button("minecraft:lime_concrete", &format!("Buy {n} for {}", money(cost)), "green"),
-                        &[(format!("Tax {}%: +{}", smp.market.config.dynamic.tax_percent, money(tax(cost))), "gray")],
-                    );
+                    let mut b = button("minecraft:lime_concrete", &format!("Buy {n} for {}", money(cost)), "green");
                     b.count = n;
                     b
                 }
                 C::Sell(id, n) => {
                     let gets = smp.market.value(&id, n, false).0;
-                    let mut b = with_lore(
-                        button("minecraft:red_concrete", &format!("Sell {n} for {}", money(gets)), "red"),
-                        &[(format!("Tax {}%: −{}", smp.market.config.dynamic.tax_percent, money(tax(gets))), "gray")],
-                    );
+                    let mut b = button("minecraft:red_concrete", &format!("Sell {n} for {}", money(gets)), "red");
                     b.count = n;
                     b
                 }
@@ -1835,10 +1843,9 @@ fn ah_command(game: &mut Game<'_>, smp: &mut Smp, me: &Player, trades: bool, now
         return vec![Out::Error("The economy is off: its file can't be read (see the server log).".into())];
     };
     e.seen(me.uuid, &me.name);
-    let vat = smp.taxes.as_ref().map_or(0, |t| t.config.vat_percent);
     let reply = {
         let mut bag = GameBag(game);
-        a.command(e, me, trades, &mut bag, vat, now, line)
+        a.command(e, me, trades, &mut bag, now, line)
     };
     match reply {
         Some(smp_auction::Reply::Out(out)) => out,
@@ -1898,12 +1905,24 @@ fn ah_items(smp: &Smp, uuid: u128) -> Vec<Option<ItemStack>> {
                 C::Listing(id) => {
                     let l = a.listing(id)?;
                     let color = if l.auction { "gold" } else { "white" };
-                    named_stack(&l.item, l.count, &a.label(l, now, &money), color)
+                    let label = a.label(l, now, &money);
+                    match l.stack.as_deref().and_then(decode_stack) {
+                        // The stack itself (its name, enchantments, contents
+                        // in the tooltip), the listing's facts under it.
+                        Some(stack) => {
+                            let lines: Vec<(String, &str)> = label.split(" · ").map(|p| (p.to_owned(), color)).collect();
+                            with_lore(stack, &lines)
+                        }
+                        None => named_stack(&l.item, l.count, &label, color),
+                    }
                 }
                 C::Parcel(i) => {
                     let p = a.parcel(uuid, i)?;
                     let name = format!("Claim {} {} ({})", p.count, smp_shop::title(&p.item), p.why);
-                    named_stack(&p.item, p.count, &name, "green")
+                    match p.stack.as_deref().and_then(decode_stack) {
+                        Some(stack) => with_lore(stack, &[(name, "green")]),
+                        None => named_stack(&p.item, p.count, &name, "green"),
+                    }
                 }
                 C::Confirm(id) => {
                     let l = a.listing(id)?;
@@ -1948,7 +1967,6 @@ fn ah_clicked(game: &mut Game<'_>, smp: &mut Smp, uuid: u128, slot: i32) {
     };
     let now = chrono::Utc::now().timestamp_millis();
     let cats = smp.shop_config.categories.clone();
-    let vat = smp.taxes.as_ref().map_or(0, |t| t.config.vat_percent);
     let (Ok(e), Some(a)) = (&mut smp.economy, &mut smp.auction) else {
         return;
     };
@@ -1973,7 +1991,7 @@ fn ah_clicked(game: &mut Game<'_>, smp: &mut Smp, uuid: u128, slot: i32) {
             return;
         }
         Click::Redraw => Vec::new(),
-        Click::Buy(id) => a.buy(e, &me, &mut bag, id, vat, now),
+        Click::Buy(id) => a.buy(e, &me, &mut bag, id, now),
         Click::Bid(id) => a.bid(e, &me, id, None, now),
         Click::Withdraw(id) => {
             let mut out = a.withdraw(&me, id);
@@ -1993,112 +2011,6 @@ fn ah_clicked(game: &mut Game<'_>, smp: &mut Smp, uuid: u128, slot: i32) {
         v.1 = (**back).clone();
     }
     let items = ah_items(smp, uuid);
-    game.native_set_menu_items(uuid, items);
-    tell(game, uuid, out);
-}
-
-/// `/futures ...`: a command, or (with no argument) the menu.
-fn futures_command(game: &mut Game<'_>, smp: &mut Smp, me: &Player, now: i64, line: &str) -> Vec<Out> {
-    let (Ok(e), Some(f)) = (&mut smp.economy, &mut smp.futures) else {
-        return vec![Out::Error("The economy is off: its file can't be read (see the server log).".into())];
-    };
-    e.seen(me.uuid, &me.name);
-    let out = f.command(e, &MarketPrices(&smp.market), me, now, line).unwrap_or_default();
-    if !out.is_empty() || !line.split_whitespace().eq(["futures"]) {
-        return out;
-    }
-    if smp.trades.trade_of(me.uuid).is_some() {
-        return vec![Out::Error("Finish or cancel your trade first.".into())];
-    }
-    f.views.insert(me.uuid, (None, None));
-    let items = futures_items(smp, me.uuid, now);
-    let window = game.native_open_menu(me.uuid, smp_futures::ROWS, Text::literal("Futures"), items);
-    let f = smp.futures.as_mut().expect("checked");
-    match window {
-        Some(w) => {
-            f.views.insert(me.uuid, (Some(w), None));
-            Vec::new()
-        }
-        None => {
-            f.views.remove(&me.uuid);
-            vec![Out::Error("The futures menu couldn't open.".into())]
-        }
-    }
-}
-
-/// The futures menu: each position with its profit (green) or loss (red)
-/// and liquidation price; the insurance fund; help.
-fn futures_items(smp: &Smp, uuid: u128, now: i64) -> Vec<Option<ItemStack>> {
-    let (Some(f), Ok(e)) = (&smp.futures, &smp.economy) else {
-        return Vec::new();
-    };
-    let prices = MarketPrices(&smp.market);
-    f.layout(uuid)
-        .into_iter()
-        .map(|cell| {
-            use smp_futures::{Cell as C, Prices as _};
-            Some(match cell {
-                C::Empty => return None,
-                C::Position(id, armed) => {
-                    let p = f.position(id)?;
-                    let mark = prices.mark(&p.item, now);
-                    let up = mark.is_none_or(|m| p.pnl(m) >= 0.0);
-                    let line = f.describe(p, mark);
-                    if armed {
-                        button(&p.item, &format!("Click again to close: {line}"), "yellow")
-                    } else {
-                        button(&p.item, &line, if up { "green" } else { "red" })
-                    }
-                }
-                C::Fund => button(
-                    "minecraft:gold_block",
-                    &format!(
-                        "Insurance fund: {} · fees so far {} · {} liquidations",
-                        e.money(e.pool(smp_economy::INSURANCE)),
-                        e.money(f.data.fees),
-                        f.data.liquidations
-                    ),
-                    "gold",
-                ),
-                C::Help => button("minecraft:book", smp_futures::HELP_TEXT, "white"),
-                C::Close => button("minecraft:barrier", "Close", "red"),
-            })
-        })
-        .collect()
-}
-
-/// A click in the futures menu: arm a position, close it, or close.
-fn futures_clicked(game: &mut Game<'_>, smp: &mut Smp, uuid: u128, slot: i32) {
-    let Some(p) = game.native_server_players().into_iter().find(|p| p.uuid == uuid) else {
-        return;
-    };
-    let Ok(slot) = usize::try_from(slot) else {
-        return;
-    };
-    if slot >= smp_futures::SIZE {
-        return;
-    }
-    let me = Player {
-        uuid,
-        name: p.name.clone(),
-        level: p.permission,
-    };
-    let now = chrono::Utc::now().timestamp_millis();
-    let (Ok(e), Some(f)) = (&mut smp.economy, &mut smp.futures) else {
-        return;
-    };
-    e.now = now;
-    let out = match f.click(uuid, slot) {
-        smp_futures::Click::Nothing => return,
-        smp_futures::Click::Close => {
-            f.views.remove(&uuid);
-            game.native_close_menu(uuid);
-            return;
-        }
-        smp_futures::Click::Redraw => Vec::new(),
-        smp_futures::Click::Shut(id) => f.close(e, &MarketPrices(&smp.market), &me, id, now),
-    };
-    let items = futures_items(smp, uuid, now);
     game.native_set_menu_items(uuid, items);
     tell(game, uuid, out);
 }
@@ -2188,17 +2100,6 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
         let (o, go) = p.tick(&bodies(&players), now);
         out.extend(o);
         for t in go {
-            // The fee, to the Treasury, only for a teleport made; without
-            // the money (spent during the warmup) it is called off.
-            let economy = smp.economy.as_mut().ok().filter(|_| t.fee > 0);
-            if let Some(e) = &economy
-                && e.balance(t.uuid) < t.fee
-            {
-                p.call_off(&t);
-                let why = format!("Teleport called off: it costs {}.", e.money(t.fee));
-                out.push(Out::Tell(t.uuid, why));
-                continue;
-            }
             // `.3`: a whole number would be a block's centre to `tp`.
             let line = format!(
                 "execute in {} run tp {} {:.3} {:.3} {:.3}",
@@ -2210,18 +2111,9 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
                 out.push(Out::Tell(t.uuid, "The teleport failed.".into()));
                 continue;
             }
-            let mut done = t.done.clone();
-            if let Some(e) = economy {
-                match e.to_pool("travel_fee", t.uuid, smp_economy::TREASURY, t.fee, &t.what) {
-                    Ok(()) => done = format!("{done} Fee: {}.", e.money(t.fee)),
-                    Err(err) => log::warn!("[smp] travel fee: {err}"),
-                }
-            }
-            out.push(Out::Tell(t.uuid, done));
+            out.push(Out::Tell(t.uuid, t.done.clone()));
         }
     }
-    // Futures menus to draw again after the minute's marking.
-    let mut redraw: Vec<u128> = Vec::new();
     if let Ok(e) = &mut smp.economy
         && n % 20 == 0
     {
@@ -2244,41 +2136,17 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
         // The auction house: notes for who came on, listings that ended.
         if let Some(a) = &mut smp.auction {
             let on: Vec<u128> = players.iter().map(|p| p.uuid).collect();
-            let vat = smp.taxes.as_ref().map_or(0, |t| t.config.vat_percent);
-            out.extend(a.tick(e, &on, vat, now));
-        }
-        // Futures: marked once a minute (liquidations, funding each hour);
-        // the open menus are drawn again then, with the new profits.
-        if let Some(f) = &mut smp.futures {
-            let on: Vec<u128> = players.iter().map(|p| p.uuid).collect();
-            let minute = f.data.minute;
-            out.extend(f.tick(e, &MarketPrices(&smp.market), &on, now));
-            if f.data.minute != minute {
-                redraw = f.views.iter().filter(|v| v.1.0.is_some()).map(|v| *v.0).collect();
-            }
-        }
-        // The day's contracts: an O(1) check each second, posted once a day.
-        if let Some(j) = &mut smp.jobs {
-            let price = |id: &str| market_price(&smp.market, id);
-            out.extend(j.tick(e, &price, now));
-        }
-        // The bank's interest: an O(1) check each second, the work once a day.
-        if let Some(b) = &mut smp.bank {
-            out.extend(b.tick(e, now));
+            out.extend(a.tick(e, &on, now));
         }
         // The daily report and, once a minute, web/economy.json (written off
         // the tick thread).
         if let Some(r) = &mut smp.report
             && r.due(now)
         {
-            let savings = smp.bank.as_ref().map(|b| b.savings()).unwrap_or_default();
-            let (o, web) = r.tick(e, &savings, now);
+            let (o, web) = r.tick(e, now);
             out.extend(o);
             if web {
-                let taxes = smp.taxes.as_ref().map_or(serde_json::Value::Null, |t| {
-                    serde_json::json!({"rates": t.config, "last_collection": t.state.last})
-                });
-                let doc = r.web(e, &savings, taxes, now);
+                let doc = r.web(e, now);
                 let path = smp.dir.join("web").join("economy.json");
                 std::thread::spawn(move || {
                     let made = path.parent().map_or(Ok(()), std::fs::create_dir_all);
@@ -2287,16 +2155,6 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
                     }
                 });
             }
-        }
-        // Monday's taxes: an O(1) check each second, the work once a week.
-        if let Some(t) = &mut smp.taxes
-            && t.due(now)
-        {
-            if let Some(b) = &smp.bank {
-                t.savings = b.savings();
-            }
-            let chunks = smp.claims.as_ref().map(|c| c.counts()).unwrap_or_default();
-            out.extend(t.collect(e, &chunks, now));
         }
     }
     // The market's minute: prices move, open menus and carried charts
@@ -2319,10 +2177,6 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
                 out.push(Out::All(l));
             }
         }
-    }
-    for uuid in redraw {
-        let items = futures_items(smp, uuid, now);
-        game.native_set_menu_items(uuid, items);
     }
     // Each trade's offers against the inventories now: a player gone or
     // dead ends it; a stack that changed leaves its offer.

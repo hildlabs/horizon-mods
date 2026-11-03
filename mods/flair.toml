@@ -1,0 +1,24 @@
+id = "flair"
+kind = "native-mod"
+name = "flair"
+summary = "Custom accessory mod"
+description = "A cosmetics catalog for Horizon. Open it from the title screen or the pause menu and wear HD capes that move like cloth, animated bandanas with Japanese script, hats, wings, shoulder pets and auras with colour themes. Turn your player in a live preview, hide your armor, and add your own capes and Blockbench cosmetics with animations. Only you see them."
+authors = ["_idom_"]
+owners = ["umbx-dot"]
+license = "MIT"
+source = "https://github.com/umbx-dot/horizon-flair"
+icon = "https://raw.githubusercontent.com/umbx-dot/horizon-flair/main/icon.png"
+key = "RWT9Ujo/oCprPGHHiSLHFNOJV1ZzoJdAU6EdZyiQcBwT2iMXfiYms4hD"
+
+[[versions]]
+version = "1.0.0"
+published = "2026-11-03"
+game = "26.3"
+file = "flair-1.0.0.hnmod"
+sha256 = "64e4d645d5bda3c363603d483af2095d6d3673d91803954f338d54265bf4fab5"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUT9Ujo/oCprPBIbqV9rmrjRgpF9gnCIL+4FlZXSTq0Qi4kkklSKfjNDx9YFIw1DuufGVSL3+lOieSX4Fx0nRl7j/CCUNjiWIQs=\r
+trusted comment: timestamp:1793723044\tfile:flair-1.0.0.hnmod\thashed\r
+QPCGNEAWFCaZLdZLgkUVY9v+hRP4/gJe4H2hCMh7YT7k/V4tynkQ0AM3hZqEdrBoPn4q5SFHDVIcloGkqCTzDw=="""
+changelog = "Initial Release."
