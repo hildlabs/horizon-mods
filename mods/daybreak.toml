@@ -1,0 +1,5 @@
+id = "daybreak"
+kind = "shader"
+repo = "hildlabs/horizon-shaders"
+owners = ["hildlabs"]
+icon = "icons/daybreak.png"
