@@ -24,6 +24,7 @@ source = "https://github.com/hildlabs/horizon-shaders"
 icon = "icons/daybreak.png"
 categories = ["semi-realistic", "shadows", "medium"]
 tags = ["shadows", "water", "reflections", "waving-plants", "sun-rays", "bloom", "lightweight"]
+screenshots = ["screenshots/daybreak/1.jpg", "screenshots/daybreak/2.jpg", "screenshots/daybreak/3.jpg"]
 
 [[versions]]
 version = "0.1.1"
