@@ -1,9 +1,9 @@
 # Merging publishes: each new version's file becomes a release asset
-# (<id>-<version>/<file>), then index.json and the icons go to GitHub Pages
-# (https://horizon-rust.github.io/horizon-mods/index.json), which the launcher and
+# (<id>-<version>/<file>), then index.json, the icons and the screenshots go to GitHub
+# Pages (https://horizon-rust.github.io/horizon-mods/index.json), which the launcher and
 # playhorizon.dev/mods read. Nothing is published if any entry fails its checks.
-# Every hour it runs again to refresh each project's `downloads`: GitHub's
-# download counts of its release assets.
+# Every hour it runs again to refresh each project's `downloads` (GitHub's download
+# counts of its release assets) and `stars` (its source repository's GitHub stars).
 name: publish
 on:
   push:
@@ -73,9 +73,33 @@ jobs:
               | if $n > 0 then .downloads = $n else . end)' site/index.json > index.counted.json
           mv index.counted.json site/index.json
           jq -r '.projects[] | "\(.id) \(.downloads // 0)"' site/index.json
+      - name: GitHub stars
+        run: |
+          # A project's stars are its source repository's (owner/repo of a
+          # https://github.com/ source, a folder of it or .git included), asked
+          # once per repository. One that can't be read is left out, not zero.
+          jq -r '.projects[].source // empty' site/index.json \
+            | sed -nE 's#^https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+).*#\1/\2#p' \
+            | sed -E 's/\.git$//' | tr 'A-Z' 'a-z' | sort -u \
+            | while read -r repo; do
+                n="$(gh api "repos/$repo" --jq .stargazers_count 2>/dev/null)" || continue
+                echo "{\"key\": \"$repo\", \"value\": $n}"
+              done | jq -s from_entries > stars.json
+          jq --slurpfile stars stars.json '
+            .projects |= map(
+              (first((.source // "") | ascii_downcase
+                | capture("^https://github[.]com/(?<r>[a-z0-9-]+/[a-z0-9._-]+)").r
+                | sub("[.]git$"; "")) // "") as $r
+              | ($stars[0][$r] // 0) as $n
+              | if $n > 0 then .stars = $n else . end)' site/index.json > index.starred.json
+          mv index.starred.json site/index.json
+          jq -r '.projects[] | "\(.id) \(.stars // 0)"' site/index.json
       - name: The site
         run: |
           cp -R icons site/icons
+          # Screenshots are served beside the icons: the index lists them at
+          # <site>screenshots/<id>/<name>.
+          if [ -d screenshots ]; then cp -R screenshots site/screenshots; fi
           cat > site/index.html <<'HTML'
           <!doctype html><meta charset="utf-8"><title>Horizon mods</title>
           <meta http-equiv="refresh" content="0; url=https://playhorizon.dev/mods">
