@@ -8,19 +8,28 @@ Waypoints for Horizon.
 - **N**: create a waypoint where you stand: name, X/Y/Z, dimension, colour, visible or hidden. Enter saves, Tab moves between fields, Esc cancels.
 - **M**: the waypoint list, filtered by All / Overworld / Nether / End. Each row shows its colour, name, coordinates, dimension and distance, with Hide/Show, Edit and Delete buttons.
 - **In the world**: each visible waypoint in your current dimension shows its name, its distance and a marker in its colour.
-- **Options > Mods > Waypoints**: rebind both keys and turn the in-world labels on or off.
+- **When you die**: a red `Death 1`, `Death 2`... waypoint marks the block you died on. The newest 5 stay, and the oldest goes when you die again; rename one to keep it for good.
+- **Options > Mods > Waypoints**: rebind both keys, and turn the in-world labels and the death waypoints on or off.
 
-**What it does and doesn't do:** it only reads the game's own state (player position, dimension, camera, world folder name, server address) and draws on the HUD and its own screen. It stores waypoints as a text file per world and per server in `horizon-mods/.horizon-mod-data/waypoints/` inside the game folder. It uses only the Rust standard library, opens no network connections, and reads or writes no other files.
+**What it does and doesn't do:** it only reads the game's own state (player position, dimension, camera, death screen, last death location, world folder name, server address) and draws on the HUD and its own screen. It stores waypoints as a text file per world and per server in `horizon-mods/.horizon-mod-data/waypoints/` inside the game folder. It uses only the Rust standard library, opens no network connections, and reads or writes no other files.
 
-Pinned to Horizon `c9d474d`, because it reads the world folder, server address and last frame's camera from the game itself."""
+Pinned to Horizon `c9d474d`, because it reads the world folder, server address, last frame's camera and the player's death from the game itself."""
 authors = ["Nirokx"]
 owners = ["Nirokx"]
 owner_ids = [95123456]
 license = "MIT"
 source = "https://github.com/Nirokx/horizon-waypoints"
 icon = "icons/waypoints.png"
-categories = ["utility", "adventure"]
+categories = ["adventure", "utility"]
 tags = ["waypoints", "navigation", "markers", "hud"]
+
+[[versions]]
+version = "1.1.0"
+published = "2026-11-05"
+game = "26.3"
+file = "waypoints-1.1.0.hnmod"
+sha256 = "8ff61c453204ac26cdbe24588ccaa5660af3ffbc815fb4ad0ef4d7d7e6b1bae9"
+changelog = "Waypoints on death: dying leaves a red `Death 1`, `Death 2`... waypoint on the block you died on, in the right dimension. Turn it on or off in Options > Mods > Waypoints (on by default). The newest 5 stay, and renaming one keeps it for good."
 
 [[versions]]
 version = "1.0.0"

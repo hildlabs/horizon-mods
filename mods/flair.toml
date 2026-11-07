@@ -1,6 +1,6 @@
 id = "flair"
 kind = "native-mod"
-name = "flair"
+name = "Flair"
 summary = "Custom accessory mod"
 description = "A cosmetics catalog for Horizon. Open it from the title screen or the pause menu and wear HD capes that move like cloth, animated bandanas with Japanese script, hats, wings, shoulder pets and auras with colour themes. Turn your player in a live preview, hide your armor, and add your own capes and Blockbench cosmetics with animations. Only you see them."
 authors = ["_idom_"]
@@ -12,6 +12,19 @@ icon = "icons/flair.png"
 categories = ["decoration"]
 tags = ["cosmetics", "capes", "hats", "wings", "pets", "blockbench"]
 key = "RWT9Ujo/oCprPGHHiSLHFNOJV1ZzoJdAU6EdZyiQcBwT2iMXfiYms4hD"
+
+[[versions]]
+version = "1.0.1"
+published = "2026-11-06"
+game = "26.3"
+file = "flair-1.0.1.hnmod"
+sha256 = "6f9abce8af586f448c5d450e394fda609ae02d0878851561ea884c0a17c9d76a"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUT9Ujo/oCprPE95aTdyPbv21Jlzh61FMqzYiFgzQoTWZMN0huMrXPHNZn7wnGToMzY9QM6HrayTdJGzSsmLCJIoA1H5gtI7PAY=\r
+trusted comment: timestamp:1793995567\tfile:flair-1.0.1.hnmod\thashed\r
+OSdZh0w/9j58lFtRV4xF+vDBLO2Qn98KebWLLXYXYSGriZiHiTUZ6HcVXO7HIgZRwhHQPXjXyfL1KVrAaHuXCQ=="""
+changelog = "Works on Nightly 66f3981."
 
 [[versions]]
 version = "1.0.0"

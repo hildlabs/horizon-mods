@@ -43,7 +43,7 @@ use std::{path::PathBuf, sync::Mutex};
 /// The mod's id, name and version.
 pub const ID: &str = "smp";
 pub const NAME: &str = "SMP";
-pub const VERSION: &str = "0.34.0";
+pub const VERSION: &str = "0.35.0";
 
 /// `config.json` in `world/horizon-smp/`, written with its defaults the
 /// first time, and again with the keys a newer version adds (values kept).
@@ -2682,22 +2682,18 @@ pub(in crate::game) fn tick(game: &mut Game<'_>) {
             game.native_sleep_ignored(uuid, ignored);
         }
     }
-    // A vanished player doesn't hold the night up; the subtitle lasts a
-    // little past the next second's (1.5 s), so it never blinks.
+    // A vanished player doesn't hold the night up. The reminder is on the
+    // action bar, above the hotbar, not in the middle of the screen: sent once
+    // a second, it stays up (an action bar line lasts about 3 s), so it never blinks.
     for (uuid, name) in subtitles {
         game.native_sleep_ignored(uuid, true);
-        let subtitle = serde_json::json!({"text": smp_vanish::SUBTITLE, "color": "aqua"});
-        for line in [
-            format!("title {name} times 0 30 5"),
-            format!("title {name} subtitle {subtitle}"),
-            format!("title {name} title \"\""),
-        ] {
-            game.native_run_command(&line);
-        }
+        let line = serde_json::json!({"text": smp_vanish::SUBTITLE, "color": "aqua"});
+        game.native_run_command(&format!("title {name} actionbar {line}"));
     }
     for (uuid, name) in unvanished {
         game.native_sleep_ignored(uuid, false);
-        game.native_run_command(&format!("title {name} clear"));
+        // An empty line takes the reminder down at once, and leaves any title alone.
+        game.native_run_command(&format!("title {name} actionbar \"\""));
     }
     for line in particles.into_iter().chain(casino) {
         game.native_run_command(&line);

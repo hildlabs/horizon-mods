@@ -18,6 +18,14 @@ categories = ["transportation", "library"]
 tags = ["teleport", "waystones", "fast-travel", "assets"]
 
 [[versions]]
+version = "0.6.1"
+published = "2026-11-05"
+game = "26.3"
+file = "wayfarer_stones-0.6.1.hmod"
+sha256 = "075df3102918ff059abab53392584a58a17b9090a352a7d29018be69fde23034"
+changelog = "Says in chat, with a link, when the assets mod is missing. Pinned to Nightly 2026-11-04 (67dad0d) and Horizon Mixins e8cd0aa; also checked in the game on Nightly 2026-11-05 (f319701)."
+
+[[versions]]
 version = "0.6.0"
 published = "2026-11-04"
 game = "26.3"

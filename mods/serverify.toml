@@ -14,7 +14,7 @@ It is the Horizon version of [Serverify](https://github.com/Louchatfroff/serveri
 - Adds chat commands: `/serverify web`, `list [category]`, `search <words>`, `next`, `prev`, `add <number>` and `categories`.
 - Adds a row in Options > Mods with a rebindable key (F8 by default) and a settings page with two buttons: open the browser, and **Offline-mode servers only** (on by default).
 
-Horizon cannot join servers that check Minecraft accounts yet, which is most public servers, so by default the page shows servers that accept offline-mode players. Turn the filter off to see all of them.
+Horizon joins servers that check Minecraft accounts with your Microsoft sign-in, like the official launcher. This version still turns the offline-mode filter on by default, from a time when Horizon couldn't: turn it off to see all servers.
 
 ## What it contacts
 

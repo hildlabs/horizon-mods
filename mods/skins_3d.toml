@@ -2,7 +2,7 @@ id = "skins_3d"
 kind = "native-mod"
 name = "3D Skins"
 summary = "The outer layer of every player's skin drawn as real 3D pixels."
-description = "The outer layer of every player’s skin drawn as real 3D pixels: hat, jacket, sleeves and pants follow the head, arms and legs exactly as the game moves them. Works for everyone you can see, with downloaded, launcher and default skins, classic and slim arms and HD skins, respects Skin Customization, and switches to the flat layer further away. Client side only."
+description = "The outer layer of every player’s skin drawn as real 3D pixels: hat, jacket, sleeves and pants follow the head, arms and legs exactly as the game moves them. Lighter and cleaner than Horizon’s built-in option: about 4x fewer polygons, closed corners, nothing poking through armor, and 3D sleeves in first person. Works for everyone you can see, respects Skin Customization, and switches to the flat layer further away. Client side only."
 authors = ["_idom_"]
 owners = ["umbx-dot"]
 license = "MIT"
@@ -11,6 +11,19 @@ icon = "icons/skins_3d.png"
 categories = ["decoration"]
 tags = ["skins", "3d-skins", "players", "cosmetic"]
 key = "RWT9Ujo/oCprPGHHiSLHFNOJV1ZzoJdAU6EdZyiQcBwT2iMXfiYms4hD"
+
+[[versions]]
+version = "1.1.0"
+published = "2026-11-06"
+game = "26.3"
+file = "skins_3d-1.1.0.hnmod"
+sha256 = "ac9f20ea771f2abb25976c06d320883016b13a984075522ecc07323b48994602"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUT9Ujo/oCprPF+RAt5OphHM0S5RIZI7zhUJ65ugOkL0YwROHGuVpB9alKJJtoMEp7po82qGwQarg6wZ9tNFkxV6IEUiserpwQQ=\r
+trusted comment: timestamp:1793995572\tfile:skins_3d-1.1.0.hnmod\thashed\r
+JiMtdZ3uX7xDgdAzZveNLx5n8yo/qpzBshdHH2cDfkuELSKGQ9mF/78F55V4Ef3gPZMhpbp2X/cvVGlJcmnMBQ=="""
+changelog = "Works on Nightly 66f3981."
 
 [[versions]]
 version = "1.0.1"

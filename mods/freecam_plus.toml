@@ -17,6 +17,19 @@ tags = ["freecam", "camera", "spectator"]
 key = "RWT9Ujo/oCprPGHHiSLHFNOJV1ZzoJdAU6EdZyiQcBwT2iMXfiYms4hD"
 
 [[versions]]
+version = "1.0.1"
+published = "2026-11-06"
+game = "26.3"
+file = "freecam_plus-1.0.1.hnmod"
+sha256 = "42687902b5dfe3b5aea2eea59587b5cd62b93da0e623a4ebd0da22cf8a9a20bf"
+signature = """
+untrusted comment: signature from minisign secret key\r
+RUT9Ujo/oCprPBaIHKVmItovhEFGd5pSVv6sva9wzRhBf6+j4URhuZHJoFJHSghQAnJ6A6SIfGTWaz5lLU9EqUmyUy9ijbMxWgs=\r
+trusted comment: timestamp:1793995562\tfile:freecam_plus-1.0.1.hnmod\thashed\r
+LYV7ctQMr8YTSAv51H8H3GwMl0chSJi2lzPW1DWcWdbPxuYa4GI06iJKAeKdhTZkeQH+XnmtVkXt2CWIqtj2AA=="""
+changelog = "Works on Nightly 66f3981."
+
+[[versions]]
 version = "1.0.0"
 published = "2026-10-31"
 game = "26.3"

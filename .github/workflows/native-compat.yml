@@ -1,0 +1,103 @@
+# Native mods on the newest Nightly, as players' launchers build them (scripts/native_compat.py):
+# - on a pull request, each new native-mod version, applied together with the most downloaded native mods
+#   and compiled (`cargo check`); its support modules' names against every registry mod's;
+# - every day after the Nightly, every native mod's newest version, applied, then the rest compiled
+#   (`cargo check`): the ones horizon-mixins refuses alone and the ones whose own code doesn't compile go
+#   to the `native-health` release, which publish adds to the index (`broken_on`) so the launcher warns
+#   before an install.
+# The check compiles the submission, whose crates may have build scripts: it runs with a token that can
+# only read, and main's script, never the pull request's.
+name: native-compat
+on:
+  pull_request:
+    branches: [main]
+    paths: ["mods/*.toml"]
+  schedule:
+    - cron: "40 18 * * *"
+  workflow_dispatch:
+    inputs:
+      horizon:
+        description: "Horizon commit, or `latest` (the newest Nightly)"
+        default: latest
+      upload:
+        description: "Publish the result (native-health release); `false` for a trial run"
+        default: "true"
+permissions:
+  contents: read
+concurrency:
+  group: native-compat-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  # The Rust the launcher builds native mods with (Horizon's launcher/src/rust_toolchain.rs).
+  RUST: "1.99.1"
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: actions/checkout@v4
+        with:
+          path: head
+          persist-credentials: false
+      - name: Does it change a native mod?
+        id: native
+        run: |
+          if [ -n "$(python3 base/scripts/native_compat.py new base head)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.native.outputs.changed == 'true'
+        run: rustup toolchain install $RUST --profile minimal && rustup default $RUST
+      - if: steps.native.outputs.changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+      - if: steps.native.outputs.changed == 'true'
+        name: On the newest Nightly, with the popular native mods
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          python3 base/scripts/native_compat.py check base head | tee -a "$GITHUB_STEP_SUMMARY"
+  health:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Each mod horizon-mixins refuses costs one more apply of the whole set.
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: rustup toolchain install $RUST --profile minimal && rustup default $RUST
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+      # Yesterday's dependencies, checked, and horizon-mixins: only Horizon's own crates and the mods compile again.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            native/target/compat/cargo
+            native/target/horizon-mixins
+          key: native-health-${{ env.RUST }}-${{ github.run_id }}
+          restore-keys: native-health-${{ env.RUST }}-
+      - name: Every native mod's newest version on the newest Nightly
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HORIZON: ${{ inputs.horizon || 'latest' }}
+        run: |
+          set -o pipefail
+          python3 scripts/native_compat.py health --horizon "$HORIZON" --out native-health.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep it for publish
+        if: inputs.upload != 'false'
+        run: |
+          gh release view native-health >/dev/null 2>&1 \
+            || gh release create native-health --prerelease --title "Native mods' health" \
+                 --notes "native-health.json: the native mods that don't apply on the newest Nightly (native-compat.yml). publish adds them to the index as broken_on."
+          gh release upload native-health native-health.json --clobber

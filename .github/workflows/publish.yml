@@ -94,6 +94,21 @@ jobs:
               | if $n > 0 then .stars = $n else . end)' site/index.json > index.starred.json
           mv index.starred.json site/index.json
           jq -r '.projects[] | "\(.id) \(.stars // 0)"' site/index.json
+      - name: Native mods that don't apply on the newest Nightly
+        run: |
+          # native-compat.yml's daily health: the version each names gets `broken_on`, the Horizon
+          # commit horizon-mixins refused it on and its code, so the launcher warns before an install.
+          if gh release download native-health --pattern native-health.json --dir health 2>/dev/null; then
+            jq --slurpfile h health/native-health.json '
+              $h[0] as $health
+              | .projects |= map(. as $p | .versions |= map(
+                  ($health.broken[$p.id] // null) as $b
+                  | if $b != null and $b.version == .version
+                    then .broken_on = [{horizon: $health.horizon, code: $b.code}] else . end))' \
+              site/index.json > index.health.json
+            mv index.health.json site/index.json
+            jq -r '.projects[] | select(.versions[0].broken_on) | "\(.id) \(.versions[0].version): \(.versions[0].broken_on[0].code)"' site/index.json
+          fi
       - name: The site
         run: |
           cp -R icons site/icons

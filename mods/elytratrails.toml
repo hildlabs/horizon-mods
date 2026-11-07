@@ -56,7 +56,21 @@ source = "https://github.com/soufied/ElytraTrails-Horizon"
 icon = "icons/elytratrails.png"
 categories = ["transportation", "decoration"]
 tags = ["elytra", "trails", "flying", "cosmetic", "port"]
+screenshots = ["screenshots/elytratrails/1.png"]
 key = "RWT6eNq4e5WfVDA2lzOOi6XCm/+jJgilqT1+HUUM33ie5MCjcRfSg760"
+
+[[versions]]
+version = "0.1.2"
+published = "2026-11-05"
+game = "26.3"
+file = "elytratrails-0.1.2.hnmod"
+sha256 = "ad6758f1ff0fa1b50750764bf2eb1f78ea94af8ecc84d75a7cc6ec5dcffb31a6"
+signature = """
+untrusted comment: signature from minisign secret key
+RUT6eNq4e5WfVKcXvbtSBLrKVo7xIwhiDU8HWuu+fwnIUEW2rftVNxgM85wXqFBifP4sLdEwkzPGs3IhqJIt8xrx9V5oyiQGqQE=
+trusted comment: timestamp:1793888825\tfile:elytratrails-0.1.2.hnmod\thashed
++ZO1qtw4aC7wLLskQA9Qg3wYRMqlITduNU194dJ3+2RhGRCgQi4kup09WDL8tlMPtd32Og23omxxx/lBYEtfAg=="""
+changelog = "Net Update."
 
 [[versions]]
 version = "0.1.1"

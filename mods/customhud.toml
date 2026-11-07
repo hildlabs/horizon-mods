@@ -12,7 +12,8 @@ Shows the current survival day, an in-game clock and a color-shifting bar that f
 - Day/night bar with four color themes (Classic, Pastel, Colorblind, Mono), night marks, countdown to night or day, moon phase.
 - Top or bottom placement, size, opacity, offsets, optional background; vanilla boss bars move below the HUD when it is at the top.
 - Settings screen opened with H (or from Options > Mods): Elements, Look and Behavior, with tooltips.
-- English, Italian, German, Spanish, French and Portuguese."""
+- English, Italian, German, Spanish, French and Portuguese.
+- Simple mode: only "Day: N", placed anywhere on the screen (drag it with the mouse or set Position X / Y)."""
 authors = ["SCARABOCCHIO100"]
 owners = ["sonoFrangu"]
 owner_ids = [205944444]
@@ -21,6 +22,18 @@ source = "https://github.com/sonoFrangu/CustomHUD-Horizon"
 icon = "icons/customhud.png"
 categories = ["utility"]
 tags = ["day-counter", "clock", "hud", "day-night", "moon-phase", "port"]
+
+[[versions]]
+version = "1.7.0"
+published = "2026-11-06"
+game = "26.3"
+file = "customhud-1.7.0.hnmod"
+sha256 = "f83437e2924b57cb442bd585baa46819ecba5b142bdbbfcb34d109a2cff4a144"
+changelog = """
+- New **simple mode** (Elements > Simple mode): only "Day: N", anywhere on the screen.
+- Right next to the toggle: **Move with mouse** to drag it (arrow keys for fine moves), or Position X / Position Y (0-100%).
+- Size, opacity, background and milestones still apply.
+- Built on Horizon c9d474d."""
 
 [[versions]]
 version = "1.6.0"

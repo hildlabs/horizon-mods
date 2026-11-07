@@ -117,8 +117,8 @@ the other operators on. Needs horizon#6106 (`native_inventory`, `native_move_sta
 
 **Vanish.** `/vanish` takes an operator of level 3 out of the Tab list and the world of every player below level 3,
 whatever the game mode (survival and creative too), and those players don't read them joining or leaving; operators of
-level 3 or more still see them, and are told who vanished. A vanished operator reads a subtitle the whole time
-(*Vanished: only operators see you*), isn't counted online (the sidebar, the Tab list's footer), doesn't hold the night up, isn't
+level 3 or more still see them, and are told who vanished. A vanished operator reads a line above the hotbar the
+whole time (*Vanished: only operators see you*), isn't counted online (the sidebar, the Tab list's footer), doesn't hold the night up, isn't
 announced as AFK or on a first join, and can't be reached by name by those who don't see them (`/tpa`, `/trade`,
 `/coinflip`, `/playtime`). It lasts over a relog and a restart (`vanish.json`) until `/vanish` again. Needs
 horizon#7003 (`native_hide_player`).

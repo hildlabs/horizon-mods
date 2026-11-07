@@ -25,6 +25,19 @@ tags = ["hud", "hunger", "saturation", "food", "port"]
 key = "RWT6eNq4e5WfVDA2lzOOi6XCm/+jJgilqT1+HUUM33ie5MCjcRfSg760"
 
 [[versions]]
+version = "0.1.3"
+published = "2026-11-05"
+game = "26.3"
+file = "appleskin-0.1.3.hnmod"
+sha256 = "2dac91d4c4c4ab65684f41a3279c6b27beffa7407e5362b0d7a97c28c07914a6"
+signature = """
+untrusted comment: signature from minisign secret key
+RUT6eNq4e5WfVGmizdOQdqc3jXpjW/MxBBP/JE8iFYmkrE0cKbEOUP5t11senfkM2hkDW2JLSOEJCfQJT7PMS/LnYbXET1ux0Ag=
+trusted comment: timestamp:1793891067\tfile:appleskin-0.1.3.hnmod\thashed
+r7jcpfe0pAz6c2FZAuAd6EUJojhQ56mGoq/H9hYXyC8rZ6QuwErQt/nEM4ly1VjMIKS7pbn6vCz0wK7jIak+DQ=="""
+changelog = "Fix for https://github.com/horizon-rust/horizon-mods/issues/289"
+
+[[versions]]
 version = "0.1.2"
 published = "2026-11-02"
 game = "26.3"
