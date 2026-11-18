@@ -1,0 +1,51 @@
+id = "daybreak"
+kind = "shader"
+name = "Daybreak"
+summary = "Sun shadows, reflective water, waving plants, coloured light, sun rays and bloom, built to cost as little GPU time as possible."
+description = """
+Daybreak is a shader pack in Horizon's own format. It runs inside Horizon's renderer, so Horizon's culling, batching and LOD stay in charge, and it adds as little GPU time as it can.
+
+- Sun and moon shadows with smooth edges
+- Warm sunlight, blue sky light in the shade, a dim blue night
+- Coloured block light: soul fire blue, redstone red, copper green, froglights
+- Light from torches in your hand (turn on Horizon's Dynamic lights in Extras)
+- Waving leaves, grass, flowers and crops
+- Water with waves, reflections, refraction and the sun's glint
+- A deeper sky with warm sunsets, sun rays, sun glare and haze
+- Mobs take the sun's shadow; the Nether and the End get their own light
+- Linear light and HDR on Horizon's final shader API 0.2
+
+Every effect can be changed or turned off in the game: Options > Horizon Settings > Shader Packs > Shader Options. The quality is yours to pick there too: turn shadows off for the least GPU time, or choose the shadow map's detail (1024 to 4096) and distance (48 to 160 blocks). The defaults are soft shadows over 64 blocks with screen-space water reflections; the full water mirror is one switch away.
+
+## Which version do I take?
+
+- **0.4.0** is for Horizon Nightly 2026-11-18 or newer (the final shader API 0.2).
+- **0.3.0** is for older builds that still serve shader API 0.1. The Nightly no longer loads it.
+The launcher offers the one your game can run.
+
+Original code, no Minecraft assets. Source: https://github.com/hildlabs/horizon-shaders"""
+authors = ["hildlabs"]
+owners = ["hildlabs"]
+license = "MIT"
+source = "https://github.com/hildlabs/horizon-shaders"
+icon = "icons/daybreak.png"
+categories = ["semi-realistic", "shadows", "medium"]
+tags = ["shadows", "water", "reflections", "waving-plants", "sun-rays", "bloom", "lightweight"]
+screenshots = ["screenshots/daybreak/1.jpg", "screenshots/daybreak/2.jpg", "screenshots/daybreak/3.jpg"]
+
+[[versions]]
+version = "0.4.0"
+published = "2026-11-18"
+game = "26.3"
+file = "daybreak-0.4.0.hshader"
+sha256 = "f73cbd7a460afb353d08ff84e2141c36138d9fb7a5e5356b07c6da57c356c8ab"
+changelog = """
+Daybreak 0.4.0 is Daybreak 0.3.0 for Horizon's final shader API 0.2, for the Horizon Nightly of 2026-11-18 and newer. That Nightly no longer loads API 0.1 packs, Daybreak 0.3 and older among them.
+
+- **Linear light and HDR.** API 0.2 hands every stage linear colours. Daybreak keeps its look by lighting and grading in the same space as before, bloom is filtered and added in linear light, and highlights above white are kept for HDR displays. Ported by Abeansits.
+- **Final API 0.2 inputs.** Daybreak draws terrain from `shaded_tint` and finds the water's surface by its normal, so it stays off the terrain look storage that reading `tint`, `shade`, `ao` or `face` turns on (more terrain memory and a world reload when the pack starts).
+- Everything 0.3.0 brought: coloured light only where it is coloured (fewer stutters), screen-space water reflections, sharper and cheaper shadows.
+
+On the Nightly of 2026-11-13 and older, stay on Daybreak 0.3.0.
+
+Release notes: https://github.com/hildlabs/horizon-shaders/releases/tag/v0.4.0"""
