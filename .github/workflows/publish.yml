@@ -91,14 +91,20 @@ jobs:
           done
       - name: Download counts
         run: |
-          # Each version's file is the asset at its URL: a project's downloads
-          # are its files' counts, every version together. A release made by
-          # this run isn't in the listing and has no downloads yet.
-          jq '.[].assets[] | {key: .browser_download_url, value: .download_count}' releases.json \
-            | jq -s from_entries > counts.json
+          # A project's downloads are its files' counts, every version together: every release this
+          # workflow made for it (tag `<id>-<version>`, title `<id> <version>`), so versions that left the
+          # entry still count. A pack archived with an old API and brought back keeps the downloads of its
+          # archived versions, which are still its own: the id is reserved for its owners. A release made
+          # by this run isn't in the listing and has no downloads yet.
+          # `--paginate` writes one array a page: -s and add join them.
+          jq -s 'add | [.[] | (.name // "" | split(" ")) as $p
+                | select(($p | length) == 2 and .tag_name == "\($p[0])-\($p[1])")
+                | {key: $p[0], value: ([.assets[].download_count] | add // 0)}]
+              | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries' \
+            releases.json > counts.json
           jq --slurpfile counts counts.json '
             .projects |= map(
-              ([.versions[].file.url | $counts[0][.] // 0] | add) as $n
+              ($counts[0][.id] // 0) as $n
               | if $n > 0 then .downloads = $n else . end)' site/index.json > index.counted.json
           mv index.counted.json site/index.json
           jq -r '.projects[] | "\(.id) \(.downloads // 0)"' site/index.json
