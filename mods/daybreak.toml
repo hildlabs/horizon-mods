@@ -34,6 +34,21 @@ tags = ["shadows", "water", "reflections", "waving-plants", "sun-rays", "bloom",
 screenshots = ["screenshots/daybreak/1.jpg", "screenshots/daybreak/2.jpg", "screenshots/daybreak/3.jpg"]
 
 [[versions]]
+version = "0.4.1"
+published = "2026-11-23"
+game = "26.3"
+file = "daybreak-0.4.1.hshader"
+sha256 = "4dd10beb85dd64afdd405a9a855fd116579e275ebfe3bdff1a6a84fd56c51bb7"
+changelog = """
+Daybreak 0.4.1 is a water update for Horizon's shader API 0.2 (the Horizon Nightly of 2026-11-18 and newer).
+
+- **No more checkerboard.** The waves are three swells in directions that follow neither the block grid nor each other, and the fine ripple is smooth noise instead of crossed sine waves, so wide water no longer tiles into a grid. After a pull request by ertugrulahmett.
+- **Far water stays calm.** Each wave and ripple fades out where a pixel is too coarse to show it, the sun's glint widens with distance instead of sparkling, and the screen-space reflection no longer adds per-pixel noise. By Bl4ckspell7.
+- **Flowing water on slopes.** Sloped water reflected and glinted as if it lay flat, which drew bright streaks on streams and at the foot of waterfalls. Its waves now ride on the slope.
+
+Release notes: https://github.com/hildlabs/horizon-shaders/releases/tag/v0.4.1"""
+
+[[versions]]
 version = "0.4.0"
 published = "2026-11-18"
 game = "26.3"
